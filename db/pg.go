@@ -8,12 +8,12 @@ import (
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/digitalocean/tester"
 	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/jackc/tern/migrate"
-	"github.com/nanzhong/tester"
 )
 
 var psq = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)

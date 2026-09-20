@@ -1,6 +1,6 @@
 package main
 
-import "github.com/nanzhong/tester"
+import "github.com/digitalocean/tester"
 
 type config struct {
 	Packages  []*tester.Package `json:"packages"`

@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/digitalocean/tester"
+	testerhttp "github.com/digitalocean/tester/http"
 	"github.com/google/uuid"
-	"github.com/nanzhong/tester"
-	testerhttp "github.com/nanzhong/tester/http"
 )
 
 var (

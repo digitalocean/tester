@@ -5,14 +5,14 @@ import (
 	"errors"
 	"time"
 
+	"github.com/digitalocean/tester"
 	"github.com/google/uuid"
-	"github.com/nanzhong/tester"
 )
 
 // ErrNotFound is returned when the requested item could not be found.
 var ErrNotFound = errors.New("not found")
 
-//go:generate mockgen -package=db -destination=db_mock.go . DB
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -package=db -destination=db_mock.go github.com/digitalocean/tester/db DB
 
 // DB is the interface for a persistence store implementation.
 type DB interface {
@@ -29,7 +29,7 @@ type DB interface {
 	ResetRun(ctx context.Context, id uuid.UUID) error
 	DeleteRun(ctx context.Context, id uuid.UUID) error
 	CompleteRun(ctx context.Context, id uuid.UUID) error
-	FailRun(ctx context.Context, id uuid.UUID, error string) error
+	FailRun(ctx context.Context, id uuid.UUID, errorMessage string) error
 	GetRun(ctx context.Context, id uuid.UUID) (*tester.Run, error)
 	ListPendingRuns(ctx context.Context) ([]*tester.Run, error)
 	ListFinishedRuns(ctx context.Context, limit int) ([]*tester.Run, error)

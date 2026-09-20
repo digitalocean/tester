@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nanzhong/tester"
+	"github.com/digitalocean/tester"
 	"golang.org/x/sync/errgroup"
 )
 
