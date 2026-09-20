@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/digitalocean/tester/runner"
+	"github.com/digitalocean/tester/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -18,6 +19,16 @@ var runCmd = &cobra.Command{
 	Short: "start a test runner",
 	Args:  cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
+		telemetryShutdown, err := telemetry.Setup(context.Background(), "tester-runner")
+		if err != nil {
+			log.Fatalf("failed to configure telemetry: %s", err)
+		}
+		defer func() {
+			if err := telemetryShutdown(context.Background()); err != nil {
+				log.Printf("failed to flush telemetry: %s", err)
+			}
+		}()
+
 		opts := []runner.Option{runner.WithTesterAddr(viper.GetString("run-tester-addr"))}
 		if apiKey := viper.GetString("run-api-key"); apiKey != "" {
 			opts = append(opts, runner.WithAPIKey(apiKey))
