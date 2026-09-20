@@ -24,7 +24,9 @@
     }
   ],
   "scheduler": {
-    "run_timeout": "1m"
+    "run_timeout": "1m",
+    "run_delay": "1m",
+    "max_resets": 1
   },
   "slack": {
     "default_channels": [ "alerts" ]

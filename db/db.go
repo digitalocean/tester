@@ -24,8 +24,17 @@ type DB interface {
 	ListTestsForPackage(ctx context.Context, pkg string, limit int) ([]*tester.Test, error)
 	ListTestsForPackageInRange(ctx context.Context, pkg string, begin, end time.Time) ([]*tester.Test, error)
 
+	// EnqueueRun unconditionally adds a run to the queue (manual triggers).
 	EnqueueRun(ctx context.Context, run *tester.Run) error
-	StartRun(ctx context.Context, id uuid.UUID, runner string) error
+	// ScheduleRun adds a run only if the package has no unfinished run and
+	// its last run was enqueued at least minInterval ago. Safe to call from
+	// any number of server replicas concurrently.
+	ScheduleRun(ctx context.Context, run *tester.Run, minInterval time.Duration) (scheduled bool, err error)
+	// ClaimRun atomically assigns the oldest claimable run to runner, or
+	// returns ErrNotFound. Concurrent claimers never receive the same run.
+	ClaimRun(ctx context.Context, runner string, include, exclude []string) (*tester.Run, error)
+	// ResetRun returns a timed-out run to the back of the queue and
+	// increments its reset count.
 	ResetRun(ctx context.Context, id uuid.UUID) error
 	DeleteRun(ctx context.Context, id uuid.UUID) error
 	CompleteRun(ctx context.Context, id uuid.UUID) error

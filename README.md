@@ -31,7 +31,9 @@ fork is tracked under Jira epic
     }
   ],
   "scheduler": {
-    "run_timeout": "30m"                   // a run older than this with no result is reset
+    "run_timeout": "30m",                  // a claimed run older than this with no result is reset
+    "run_delay": "5m",                     // default minimum time between scheduled runs of a package
+    "max_resets": 2                        // resets before a timed-out run is failed instead
   },
   "slack": {
     "default_channels": ["alerts"],
@@ -50,6 +52,12 @@ tester --help
 Every push to `main` publishes `ghcr.io/digitalocean/tester:sha-<8>` and
 `:edge` via [`.github/workflows/image.yml`](.github/workflows/image.yml).
 `digitalocean/e2e` pins one of the `sha-*` tags in its `Dockerfile`.
+
+Scheduling is driven by Postgres, not by process memory: a package is
+enqueued only when it has no unfinished run and its last run was enqueued at
+least `run_delay` ago, under a per-package advisory lock. Runners claim with a
+single `UPDATE ... FOR UPDATE SKIP LOCKED`. Both `web` and `worker` can
+therefore run with any number of replicas.
 
 ### Server
 
