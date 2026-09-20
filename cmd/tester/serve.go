@@ -20,8 +20,8 @@ import (
 	"github.com/digitalocean/tester/http/okta"
 	"github.com/digitalocean/tester/scheduler"
 	"github.com/digitalocean/tester/slack"
+	"github.com/digitalocean/tester/telemetry"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
@@ -59,6 +59,16 @@ var serveCmd = &cobra.Command{
 			pkgBin.Close()
 		}
 
+		telemetryShutdown, err := telemetry.Setup(context.Background(), "tester")
+		if err != nil {
+			log.Fatalf("failed to configure telemetry: %s", err)
+		}
+		defer func() {
+			if err := telemetryShutdown(context.Background()); err != nil {
+				log.Printf("failed to flush telemetry: %s", err)
+			}
+		}()
+
 		l, err := net.Listen("tcp", viper.GetString("serve-addr"))
 		if err != nil {
 			log.Fatalf("failed to listen on %s", viper.GetString("serve-addr"))
@@ -74,6 +84,14 @@ var serveCmd = &cobra.Command{
 		err = dbStore.Init(context.Background())
 		if err != nil {
 			log.Fatalf("failed to init db: %s", err)
+		}
+
+		packageNames := make([]string, 0, len(cfg.Packages))
+		for _, pkg := range cfg.Packages {
+			packageNames = append(packageNames, pkg.Name)
+		}
+		if err := telemetry.RegisterPendingRunsGauge(dbStore, packageNames); err != nil {
+			log.Fatalf("failed to register pending runs gauge: %s", err)
 		}
 
 		var httpOpts []testerhttp.Option
@@ -140,7 +158,6 @@ var serveCmd = &cobra.Command{
 		apiHandler := testerhttp.NewAPIHandler(dbStore, cfg.Packages, httpOpts...)
 
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
 		mux.Handle("/api/", apiHandler)
 
 		oktaAuthHandler := configureOktaAuth(uiHandler.RenderError)
