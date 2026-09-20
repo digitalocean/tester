@@ -56,7 +56,18 @@ func (r *pgRun) Columns() []string {
 		"started_at",
 		"finished_at",
 		"error",
+		"reset_count",
 	}
+}
+
+// qualifiedColumns returns Columns() prefixed with the runs table name, for
+// statements that join or use UPDATE ... FROM.
+func (r *pgRun) qualifiedColumns() []string {
+	cols := r.Columns()
+	for i, c := range cols {
+		cols[i] = "runs." + c
+	}
+	return cols
 }
 
 func (r *pgRun) Values() []interface{} {
@@ -73,6 +84,7 @@ func (r *pgRun) Values() []interface{} {
 		startedAt,
 		finishedAt,
 		error,
+		r.ResetCount,
 	}
 }
 
@@ -92,6 +104,7 @@ func (r *pgRun) Scan(row pgx.Row) error {
 		&startedAt,
 		&finishedAt,
 		&error,
+		&r.ResetCount,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {

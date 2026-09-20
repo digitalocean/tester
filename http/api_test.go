@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -288,8 +289,7 @@ func TestClaimRun(t *testing.T) {
 				EnqueuedAt: now,
 			}
 
-			mockDB.EXPECT().ListPendingRuns(gomock.Any()).Return([]*tester.Run{run}, nil)
-			mockDB.EXPECT().StartRun(gomock.Any(), run.ID, testUserAgent).Return(nil)
+			mockDB.EXPECT().ClaimRun(gomock.Any(), testUserAgent, []string{"pkg"}, []string{}).Return(run, nil)
 
 			claimReq := ClaimRunRequest{
 				PackageWhitelist: []string{},
@@ -337,8 +337,7 @@ func TestClaimRun(t *testing.T) {
 				},
 			}
 
-			mockDB.EXPECT().ListPendingRuns(gomock.Any()).Return(runs, nil)
-			mockDB.EXPECT().StartRun(gomock.Any(), runs[1].ID, testUserAgent).Return(nil)
+			mockDB.EXPECT().ClaimRun(gomock.Any(), testUserAgent, []string{"pkg2"}, []string{}).Return(runs[1], nil)
 
 			claimReq := ClaimRunRequest{
 				PackageWhitelist: []string{"pkg2"},
@@ -386,8 +385,7 @@ func TestClaimRun(t *testing.T) {
 				},
 			}
 
-			mockDB.EXPECT().ListPendingRuns(gomock.Any()).Return(runs, nil)
-			mockDB.EXPECT().StartRun(gomock.Any(), runs[1].ID, testUserAgent).Return(nil)
+			mockDB.EXPECT().ClaimRun(gomock.Any(), testUserAgent, []string{"pkg1", "pkg2"}, []string{"pkg1"}).Return(runs[1], nil)
 
 			claimReq := ClaimRunRequest{
 				PackageWhitelist: []string{"pkg1", "pkg2"},
@@ -412,6 +410,47 @@ func TestClaimRun(t *testing.T) {
 			require.NoError(t, err)
 			assert.DeepEqual(t, runs[1], &respRun)
 		})
+	})
+}
+
+func TestClaimRun_NoneAvailable(t *testing.T) {
+	withAPIHandler(t, func(ts *httptest.Server, api *APIHandler, mockDB *db.MockDB) {
+		api.packages = map[string]*tester.Package{
+			"pkg2": {Name: "pkg2"},
+			"pkg1": {Name: "pkg1"},
+		}
+
+		// All configured packages, sorted, when the runner sends no whitelist.
+		mockDB.EXPECT().ClaimRun(gomock.Any(), testUserAgent, []string{"pkg1", "pkg2"}, gomock.Nil()).Return(nil, db.ErrNotFound)
+
+		req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/runs/claim", ts.URL), bytes.NewBufferString(`{}`))
+		require.NoError(t, err)
+		addAuth(req)
+
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func TestClaimRun_DBError(t *testing.T) {
+	withAPIHandler(t, func(ts *httptest.Server, api *APIHandler, mockDB *db.MockDB) {
+		api.packages = map[string]*tester.Package{"pkg": {Name: "pkg"}}
+
+		mockDB.EXPECT().ClaimRun(gomock.Any(), testUserAgent, []string{"pkg"}, gomock.Nil()).Return(nil, errors.New("connection reset"))
+
+		req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/runs/claim", ts.URL), bytes.NewBufferString(`{}`))
+		require.NoError(t, err)
+		addAuth(req)
+
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// A claim failure must surface to the runner, not be swallowed.
+		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	})
 }
 

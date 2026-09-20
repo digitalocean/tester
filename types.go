@@ -67,6 +67,9 @@ type Run struct {
 	FinishedAt time.Time `json:"finished_at"`
 	Tests      []*Test   `json:"tests"`
 	Error      string    `json:"error"`
+	// ResetCount is how many times the run has been reset after exceeding the
+	// run timeout. The scheduler fails the run once this reaches its limit.
+	ResetCount int `json:"reset_count"`
 }
 
 // RunMeta is additional metadata associated with the run.

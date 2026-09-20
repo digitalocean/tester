@@ -57,6 +57,21 @@ func (mr *MockDBMockRecorder) AddTest(ctx, test any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddTest", reflect.TypeOf((*MockDB)(nil).AddTest), ctx, test)
 }
 
+// ClaimRun mocks base method.
+func (m *MockDB) ClaimRun(ctx context.Context, runner string, include, exclude []string) (*tester.Run, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimRun", ctx, runner, include, exclude)
+	ret0, _ := ret[0].(*tester.Run)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimRun indicates an expected call of ClaimRun.
+func (mr *MockDBMockRecorder) ClaimRun(ctx, runner, include, exclude any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimRun", reflect.TypeOf((*MockDB)(nil).ClaimRun), ctx, runner, include, exclude)
+}
+
 // CompleteRun mocks base method.
 func (m *MockDB) CompleteRun(ctx context.Context, id uuid.UUID) error {
 	m.ctrl.T.Helper()
@@ -276,16 +291,17 @@ func (mr *MockDBMockRecorder) ResetRun(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetRun", reflect.TypeOf((*MockDB)(nil).ResetRun), ctx, id)
 }
 
-// StartRun mocks base method.
-func (m *MockDB) StartRun(ctx context.Context, id uuid.UUID, runner string) error {
+// ScheduleRun mocks base method.
+func (m *MockDB) ScheduleRun(ctx context.Context, run *tester.Run, minInterval time.Duration) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StartRun", ctx, id, runner)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "ScheduleRun", ctx, run, minInterval)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// StartRun indicates an expected call of StartRun.
-func (mr *MockDBMockRecorder) StartRun(ctx, id, runner any) *gomock.Call {
+// ScheduleRun indicates an expected call of ScheduleRun.
+func (mr *MockDBMockRecorder) ScheduleRun(ctx, run, minInterval any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartRun", reflect.TypeOf((*MockDB)(nil).StartRun), ctx, id, runner)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScheduleRun", reflect.TypeOf((*MockDB)(nil).ScheduleRun), ctx, run, minInterval)
 }
