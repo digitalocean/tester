@@ -9,14 +9,16 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/digitalocean/tester"
 	"github.com/digitalocean/tester/alerting"
 	"github.com/digitalocean/tester/db"
 	"github.com/digitalocean/tester/slack"
+	"github.com/digitalocean/tester/telemetry"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // APIHandler is the http handler for presenting the API.
@@ -105,12 +107,12 @@ func (h *APIHandler) submitTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runLabels := prometheus.Labels{
-		"name":  test.Result.Name,
-		"state": string(test.Result.State),
-	}
-	RunDurationMetric.With(runLabels).Observe(test.Result.FinishedAt.Sub(test.Result.StartedAt).Seconds())
-	RunLastMetric.With(runLabels).Set(float64(test.Result.StartedAt.Unix()))
+	testAttrs := metric.WithAttributes(
+		telemetry.AttrName.String(test.Result.Name),
+		telemetry.AttrState.String(string(test.Result.State)),
+	)
+	telemetry.TestDuration.Record(r.Context(), telemetry.Seconds(test.Result.FinishedAt.Sub(test.Result.StartedAt)), testAttrs)
+	telemetry.TestLastRun.Record(r.Context(), float64(test.Result.StartedAt.Unix()), testAttrs)
 
 	if test.Result.State == tester.TBStateFailed {
 		go func() {
@@ -187,13 +189,19 @@ func (h *APIHandler) claimRun(w http.ResponseWriter, r *http.Request) {
 	run, err := h.db.ClaimRun(r.Context(), r.Header.Get("User-Agent"), packages, claimRunRequest.PackageBlacklist)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
+			telemetry.RunClaims.Add(r.Context(), 1, metric.WithAttributes(telemetry.AttrResult.String(telemetry.ResultEmpty)))
 			renderAPIError(w, http.StatusNotFound, fmt.Errorf("no runs for packages: %s", strings.Join(packages, ", ")))
 			return
 		}
+		telemetry.RunClaims.Add(r.Context(), 1, metric.WithAttributes(telemetry.AttrResult.String(telemetry.ResultError)))
 		log.Printf("failed to claim run: %s", err)
 		renderAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	telemetry.RunClaims.Add(r.Context(), 1, metric.WithAttributes(telemetry.AttrResult.String(telemetry.ResultClaimed)))
+	telemetry.RunQueueWait.Record(r.Context(), telemetry.Seconds(run.StartedAt.Sub(run.EnqueuedAt)),
+		metric.WithAttributes(telemetry.AttrPackage.String(run.Package)))
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(run)
@@ -222,6 +230,7 @@ func (h *APIHandler) completeRun(w http.ResponseWriter, r *http.Request) {
 		renderAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
+	recordRunDuration(r.Context(), run, telemetry.ResultCompleted)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -257,8 +266,19 @@ func (h *APIHandler) failRun(w http.ResponseWriter, r *http.Request) {
 		renderAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
+	recordRunDuration(r.Context(), run, telemetry.ResultFailed)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// recordRunDuration records claim -> now for a run that just finished. Runs
+// that were never claimed (failed by the scheduler, say) have no duration.
+func recordRunDuration(ctx context.Context, run *tester.Run, result string) {
+	if run.StartedAt.IsZero() {
+		return
+	}
+	telemetry.RunDuration.Record(ctx, telemetry.Seconds(time.Since(run.StartedAt)),
+		metric.WithAttributes(telemetry.AttrPackage.String(run.Package), telemetry.AttrResult.String(result)))
 }
 
 func (h *APIHandler) getPackage(w http.ResponseWriter, r *http.Request) {
