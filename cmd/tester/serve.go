@@ -87,12 +87,27 @@ var serveCmd = &cobra.Command{
 			if cfg.Scheduler.RunTimeout != "" {
 				timeout, err := time.ParseDuration(cfg.Scheduler.RunTimeout)
 				if err != nil {
-					log.Fatalf("invalid run timeout: %s", cfg.Scheduler.RunTimeout)
+					log.Fatalf("invalid scheduler.run_timeout: %s", cfg.Scheduler.RunTimeout)
 				}
 				schedulerOpts = append(schedulerOpts, scheduler.WithRunTimeout(timeout))
 			}
+			if cfg.Scheduler.RunDelay != "" {
+				delay, err := time.ParseDuration(cfg.Scheduler.RunDelay)
+				if err != nil {
+					log.Fatalf("invalid scheduler.run_delay: %s", cfg.Scheduler.RunDelay)
+				}
+				schedulerOpts = append(schedulerOpts, scheduler.WithRunDelay(delay))
+			}
+			if cfg.Scheduler.MaxResets != nil {
+				if *cfg.Scheduler.MaxResets < 0 {
+					log.Fatalf("invalid scheduler.max_resets: %d", *cfg.Scheduler.MaxResets)
+				}
+				schedulerOpts = append(schedulerOpts, scheduler.WithMaxResets(*cfg.Scheduler.MaxResets))
+			}
 		}
-		scheduler := scheduler.NewScheduler(dbStore, cfg.Packages)
+		scheduler := scheduler.NewScheduler(dbStore, cfg.Packages, schedulerOpts...)
+		log.Printf("scheduler: run_timeout=%s run_delay=%s max_resets=%d packages=%d",
+			scheduler.RunTimeout(), scheduler.RunDelay(), scheduler.MaxResets(), len(cfg.Packages))
 
 		log.Print("configuring alert manager")
 		var (

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
@@ -221,6 +222,98 @@ func (p *PG) StartRun(ctx context.Context, id uuid.UUID, runner string) error {
 
 }
 
+// ScheduleRun enqueues run only if the package has no unfinished run and its
+// most recent run was enqueued at least minInterval ago. The check and the
+// insert happen under a per-package transaction-scoped advisory lock, so any
+// number of server replicas calling this concurrently converge on exactly one
+// run per package per interval without process-local state.
+func (p *PG) ScheduleRun(ctx context.Context, run *tester.Run, minInterval time.Duration) (bool, error) {
+	scheduled := false
+	err := p.tx(ctx, func(tx pgx.Tx) error {
+		// hashtext returns int4, which pg_advisory_xact_lock(bigint) accepts.
+		// The lock is released automatically at commit/rollback.
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", run.Package); err != nil {
+			return fmt.Errorf("locking package %q: %w", run.Package, err)
+		}
+
+		var (
+			pending        int
+			lastEnqueuedAt sql.NullTime
+		)
+		err := tx.QueryRow(ctx,
+			`SELECT count(*) FILTER (WHERE finished_at IS NULL), max(enqueued_at) FROM runs WHERE package = $1`,
+			run.Package,
+		).Scan(&pending, &lastEnqueuedAt)
+		if err != nil {
+			return fmt.Errorf("inspecting runs for package %q: %w", run.Package, err)
+		}
+		if pending > 0 {
+			return nil
+		}
+		if lastEnqueuedAt.Valid && p.now().Sub(lastEnqueuedAt.Time) < minInterval {
+			return nil
+		}
+
+		r := (*pgRun)(run)
+		q := psq.Insert("runs").
+			Columns(r.Columns()...).
+			Values(r.Values()...)
+		sql, args, err := q.ToSql()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, sql, args...); err != nil {
+			return err
+		}
+		scheduled = true
+		return nil
+	})
+	return scheduled, err
+}
+
+// ClaimRun atomically hands the oldest claimable run to runner. A run is
+// claimable when it has not started, has not finished, its package is in
+// include, and its package is not in exclude. The row is selected FOR UPDATE
+// SKIP LOCKED so concurrent claimers never receive the same run. Returns
+// ErrNotFound when nothing is claimable.
+func (p *PG) ClaimRun(ctx context.Context, runner string, include, exclude []string) (*tester.Run, error) {
+	if include == nil {
+		include = []string{}
+	}
+	if exclude == nil {
+		exclude = []string{}
+	}
+
+	r := &pgRun{}
+	query := fmt.Sprintf(`
+WITH candidate AS (
+	SELECT id FROM runs
+	WHERE started_at IS NULL
+	  AND finished_at IS NULL
+	  AND package = ANY($1)
+	  AND NOT (package = ANY($2))
+	ORDER BY enqueued_at ASC
+	LIMIT 1
+	FOR UPDATE SKIP LOCKED
+)
+UPDATE runs
+SET started_at = $3,
+    meta = jsonb_set(meta, '{runner}', to_jsonb($4::text))
+FROM candidate
+WHERE runs.id = candidate.id
+RETURNING %s`, strings.Join(r.qualifiedColumns(), ", "))
+
+	row := p.pool.QueryRow(ctx, query, include, exclude, p.now(), runner)
+	if err := r.Scan(row); err != nil {
+		return nil, err
+	}
+	return (*tester.Run)(r), nil
+}
+
+// ResetRun returns a started-but-unfinished run to the queue. The run is
+// re-enqueued at the back (enqueued_at = now) rather than keeping its original
+// position, and its reset_count is incremented so the scheduler can stop
+// retrying it after a bounded number of attempts.
 func (p *PG) ResetRun(ctx context.Context, id uuid.UUID) error {
 	q := psq.Update("runs").
 		SetMap(map[string]interface{}{
@@ -228,7 +321,9 @@ func (p *PG) ResetRun(ctx context.Context, id uuid.UUID) error {
 			"finished_at": sql.NullTime{},
 			"error":       sql.NullString{},
 			"meta":        tester.RunMeta{},
+			"enqueued_at": p.now(),
 		}).
+		Set("reset_count", sq.Expr("reset_count + 1")).
 		Where("id = ?", id).
 		Where("finished_at IS NULL")
 

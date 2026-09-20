@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -223,6 +224,10 @@ func TestPG_ResetRun(t *testing.T) {
 		err = pg.StartRun(ctx, run.ID, "runner")
 		require.NoError(t, err)
 
+		before, err := pg.GetRun(ctx, run.ID)
+		require.NoError(t, err)
+
+		pg.now = func() time.Time { return before.EnqueuedAt.Add(time.Minute) }
 		err = pg.ResetRun(ctx, run.ID)
 		require.NoError(t, err)
 
@@ -230,6 +235,194 @@ func TestPG_ResetRun(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, getRun.StartedAt)
 		assert.Equal(t, "", getRun.Meta.Runner)
+		// A reset run goes to the back of the queue, not the front.
+		assert.True(t, getRun.EnqueuedAt.After(before.EnqueuedAt), "enqueued_at %s should be after %s", getRun.EnqueuedAt, before.EnqueuedAt)
+		assert.Equal(t, 1, getRun.ResetCount)
+
+		err = pg.ResetRun(ctx, run.ID)
+		require.NoError(t, err)
+		getRun, err = pg.GetRun(ctx, run.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 2, getRun.ResetCount)
+	})
+}
+
+func TestPG_ScheduleRun(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		t0 := time.Now().UTC().Truncate(time.Millisecond)
+		pg.now = func() time.Time { return t0 }
+		newRun := func() *tester.Run {
+			return &tester.Run{ID: uuid.New(), Package: "pkg", EnqueuedAt: pg.now()}
+		}
+
+		scheduled, err := pg.ScheduleRun(ctx, newRun(), 10*time.Minute)
+		require.NoError(t, err)
+		assert.True(t, scheduled, "first schedule for a package must succeed")
+
+		scheduled, err = pg.ScheduleRun(ctx, newRun(), 10*time.Minute)
+		require.NoError(t, err)
+		assert.False(t, scheduled, "must not schedule while a run for the package is pending")
+
+		pending, err := pg.ListPendingRuns(ctx)
+		require.NoError(t, err)
+		require.Len(t, pending, 1)
+		first := pending[0]
+
+		// Finish the pending run; still inside the min interval -> no schedule.
+		err = pg.StartRun(ctx, first.ID, "runner")
+		require.NoError(t, err)
+		err = pg.CompleteRun(ctx, first.ID)
+		require.NoError(t, err)
+
+		pg.now = func() time.Time { return t0.Add(5 * time.Minute) }
+		scheduled, err = pg.ScheduleRun(ctx, newRun(), 10*time.Minute)
+		require.NoError(t, err)
+		assert.False(t, scheduled, "must not schedule within min interval of the last enqueue")
+
+		// Past the min interval -> schedules.
+		pg.now = func() time.Time { return t0.Add(11 * time.Minute) }
+		scheduled, err = pg.ScheduleRun(ctx, newRun(), 10*time.Minute)
+		require.NoError(t, err)
+		assert.True(t, scheduled, "must schedule once min interval has elapsed")
+
+		// Another package is independent.
+		scheduled, err = pg.ScheduleRun(ctx, &tester.Run{ID: uuid.New(), Package: "other", EnqueuedAt: pg.now()}, 10*time.Minute)
+		require.NoError(t, err)
+		assert.True(t, scheduled)
+	})
+}
+
+func TestPG_ScheduleRun_Concurrent(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		// Simulates N web replicas all deciding to schedule the same package
+		// at the same instant: exactly one must win.
+		const replicas = 8
+		var (
+			wg   sync.WaitGroup
+			mu   sync.Mutex
+			wins int
+			errs []error
+		)
+		for i := 0; i < replicas; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				scheduled, err := pg.ScheduleRun(ctx, &tester.Run{ID: uuid.New(), Package: "pkg", EnqueuedAt: time.Now()}, time.Minute)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					errs = append(errs, err)
+					return
+				}
+				if scheduled {
+					wins++
+				}
+			}()
+		}
+		wg.Wait()
+		require.Empty(t, errs)
+		assert.Equal(t, 1, wins)
+
+		pending, err := pg.ListPendingRuns(ctx)
+		require.NoError(t, err)
+		assert.Len(t, pending, 1)
+	})
+}
+
+func TestPG_ClaimRun(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		t0 := time.Now().UTC().Truncate(time.Millisecond)
+		enqueue := func(pkg string, at time.Time) *tester.Run {
+			run := &tester.Run{ID: uuid.New(), Package: pkg, EnqueuedAt: at}
+			require.NoError(t, pg.EnqueueRun(ctx, run))
+			return run
+		}
+		b := enqueue("b", t0)
+		a := enqueue("a", t0.Add(time.Second))
+		c := enqueue("c", t0.Add(2*time.Second))
+
+		// Oldest claimable run wins, exclusions apply, runner is recorded.
+		got, err := pg.ClaimRun(ctx, "runner-1", []string{"a", "b", "c"}, []string{"b"})
+		require.NoError(t, err)
+		assert.Equal(t, a.ID, got.ID)
+		assert.Equal(t, "runner-1", got.Meta.Runner)
+		assert.False(t, got.StartedAt.IsZero())
+
+		// Already-started runs are not claimable again.
+		got, err = pg.ClaimRun(ctx, "runner-2", []string{"a", "c"}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, c.ID, got.ID)
+
+		// Nothing left for these packages.
+		_, err = pg.ClaimRun(ctx, "runner-2", []string{"a", "c"}, nil)
+		assert.Equal(t, ErrNotFound, err)
+
+		// b is still there for a runner that accepts it.
+		got, err = pg.ClaimRun(ctx, "runner-3", []string{"b"}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, b.ID, got.ID)
+
+		// Finished runs are never claimable.
+		require.NoError(t, pg.CompleteRun(ctx, b.ID))
+		_, err = pg.ClaimRun(ctx, "runner-3", []string{"a", "b", "c"}, nil)
+		assert.Equal(t, ErrNotFound, err)
+	})
+}
+
+func TestPG_ClaimRun_Concurrent(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		const (
+			runs    = 40
+			workers = 8
+		)
+		for i := 0; i < runs; i++ {
+			require.NoError(t, pg.EnqueueRun(ctx, &tester.Run{ID: uuid.New(), Package: "pkg", EnqueuedAt: time.Now()}))
+		}
+
+		var (
+			wg      sync.WaitGroup
+			mu      sync.Mutex
+			claimed []uuid.UUID
+			errs    []error
+		)
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func(w int) {
+				defer wg.Done()
+				for {
+					run, err := pg.ClaimRun(ctx, fmt.Sprintf("worker-%d", w), []string{"pkg"}, nil)
+					if err == ErrNotFound {
+						return
+					}
+					mu.Lock()
+					if err != nil {
+						errs = append(errs, err)
+						mu.Unlock()
+						return
+					}
+					claimed = append(claimed, run.ID)
+					mu.Unlock()
+				}
+			}(w)
+		}
+		wg.Wait()
+		require.Empty(t, errs)
+
+		seen := make(map[uuid.UUID]struct{}, len(claimed))
+		for _, id := range claimed {
+			_, dup := seen[id]
+			assert.False(t, dup, "run %s claimed twice", id)
+			seen[id] = struct{}{}
+		}
+		assert.Len(t, seen, runs, "every run must be claimed exactly once")
 	})
 }
 

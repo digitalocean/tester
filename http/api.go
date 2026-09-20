@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/digitalocean/tester"
@@ -172,49 +173,30 @@ func (h *APIHandler) claimRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var packages []string
-	if len(claimRunRequest.PackageWhitelist) == 0 {
+	packages := claimRunRequest.PackageWhitelist
+	if len(packages) == 0 {
+		packages = make([]string, 0, len(h.packages))
 		for _, pkg := range h.packages {
 			packages = append(packages, pkg.Name)
 		}
-	} else {
-		packages = claimRunRequest.PackageWhitelist
-	}
-	supportedPackages := make(map[string]struct{})
-	for _, pkg := range packages {
-		supportedPackages[pkg] = struct{}{}
+		sort.Strings(packages)
 	}
 
-	unsupportedPackages := make(map[string]struct{})
-	for _, pkg := range claimRunRequest.PackageBlacklist {
-		unsupportedPackages[pkg] = struct{}{}
-	}
-
-	runs, err := h.db.ListPendingRuns(r.Context())
+	// Selection and start happen in one statement in the DB so that N
+	// runners polling concurrently never receive the same run.
+	run, err := h.db.ClaimRun(r.Context(), r.Header.Get("User-Agent"), packages, claimRunRequest.PackageBlacklist)
 	if err != nil {
-		log.Printf("failed to list runs: %s", err)
+		if errors.Is(err, db.ErrNotFound) {
+			renderAPIError(w, http.StatusNotFound, fmt.Errorf("no runs for packages: %s", strings.Join(packages, ", ")))
+			return
+		}
+		log.Printf("failed to claim run: %s", err)
 		renderAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	for _, run := range runs {
-		if !run.StartedAt.IsZero() {
-			continue
-		}
-
-		if _, unsupported := unsupportedPackages[run.Package]; unsupported {
-			continue
-		}
-
-		if _, supported := supportedPackages[run.Package]; supported {
-			h.db.StartRun(r.Context(), run.ID, r.Header.Get("User-Agent"))
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(run)
-			return
-		}
-	}
-
-	renderAPIError(w, http.StatusNotFound, fmt.Errorf("no runs for packages: %s", strings.Join(packages, ", ")))
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(run)
 }
 
 func (h *APIHandler) completeRun(w http.ResponseWriter, r *http.Request) {

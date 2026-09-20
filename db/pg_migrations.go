@@ -53,4 +53,13 @@ ALTER TABLE runs ADD COLUMN meta jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE runs DROP COLUMN meta;
 `,
 	},
+	{
+		name: "add reset_count column to runs",
+		up: `
+ALTER TABLE runs ADD COLUMN reset_count integer NOT NULL DEFAULT 0;
+`,
+		down: `
+ALTER TABLE runs DROP COLUMN reset_count;
+`,
+	},
 }
