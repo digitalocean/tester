@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
+	"github.com/digitalocean/tester"
+	"github.com/digitalocean/tester/db"
 	"github.com/google/uuid"
-	"github.com/nanzhong/tester"
-	"github.com/nanzhong/tester/db"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"gotest.tools/assert"
 )
 

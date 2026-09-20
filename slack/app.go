@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nanzhong/tester"
-	"github.com/nanzhong/tester/alerting"
-	"github.com/nanzhong/tester/scheduler"
+	"github.com/digitalocean/tester"
+	"github.com/digitalocean/tester/alerting"
+	"github.com/digitalocean/tester/scheduler"
 	"github.com/slack-go/slack"
 	"golang.org/x/sync/errgroup"
 )

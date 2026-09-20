@@ -1,24 +1,25 @@
 package http
 
 import (
+	"embed"
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
-	"os"
+	"io/fs"
 	"strings"
 	"time"
 
-	"github.com/markbates/pkger"
-	"github.com/nanzhong/tester"
+	"github.com/digitalocean/tester"
 )
+
+// templateFS holds the HTML templates compiled into the binary. Paths are
+// relative to this package: "templates/layouts/default.html" etc.
+//
+//go:embed templates
+var templateFS embed.FS
 
 type errTemplateNotFound struct {
 	path string
-}
-
-func init() {
-	pkger.Include("/http/templates")
 }
 
 func (e *errTemplateNotFound) Error() string {
@@ -35,14 +36,10 @@ func (e *errTemplateInvalid) Error() string {
 
 // ExecuteTemplate runs the given template with the value
 func (s *UIHandler) ExecuteTemplate(name string, w io.Writer, value interface{}) error {
-	defaultLayoutPath := "/http/templates/layouts/default.html"
-	file, err := pkger.Open(defaultLayoutPath)
+	defaultLayoutPath := "templates/layouts/default.html"
+	layoutContent, err := templateFS.ReadFile(defaultLayoutPath)
 	if err != nil {
 		return &errTemplateNotFound{defaultLayoutPath}
-	}
-	layoutContent, err := ioutil.ReadAll(file)
-	if err != nil {
-		return &errTemplateInvalid{defaultLayoutPath}
 	}
 
 	layout, err := template.New("layout_default").Funcs(s.templateFuncs()).Parse(string(layoutContent))
@@ -50,22 +47,18 @@ func (s *UIHandler) ExecuteTemplate(name string, w io.Writer, value interface{})
 		return err
 	}
 
-	err = pkger.Walk("/http/templates/shared", func(path string, fileInfo os.FileInfo, err error) error {
+	err = fs.WalkDir(templateFS, "templates/shared", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if fileInfo.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 
-		file, err := pkger.Open(path)
+		templateData, err := templateFS.ReadFile(path)
 		if err != nil {
 			return &errTemplateNotFound{path}
-		}
-		templateData, err := ioutil.ReadAll(file)
-		if err != nil {
-			return &errTemplateInvalid{defaultLayoutPath}
 		}
 
 		layout, err = parseTemplate(layout, string(templateData))
@@ -75,14 +68,10 @@ func (s *UIHandler) ExecuteTemplate(name string, w io.Writer, value interface{})
 		return fmt.Errorf("loading shared partial: %w", err)
 	}
 
-	templatePath := "/http/templates/" + name + ".html"
-	file, err = pkger.Open(templatePath)
+	templatePath := "templates/" + name + ".html"
+	templateData, err := templateFS.ReadFile(templatePath)
 	if err != nil {
 		return &errTemplateNotFound{templatePath}
-	}
-	templateData, err := ioutil.ReadAll(file)
-	if err != nil {
-		return &errTemplateInvalid{templatePath}
 	}
 
 	t, err := parseTemplate(layout, string(templateData))

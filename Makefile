@@ -1,36 +1,38 @@
 SHELL := /bin/bash
 
 commit ?= $(shell git rev-parse --short HEAD)
-image := nanzhong/tester
+image := ghcr.io/digitalocean/tester
 
 include ./dev/dev.mk
 
 .PHONY: clean
 clean:
 	rm -rf dist
-	rm -rf ./cmd/tester/pkged.go
-
-.PHONY: deps
-deps:
-	go get github.com/markbates/pkger/cmd/pkger
 
 .PHONY: build
-build: deps
-	pkger -o ./cmd/tester
-	GOOS=linux GOARCH=amd64 go build -o ./dist/tester-linux-amd64 ./cmd/tester/...
+build:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./dist/tester-linux-amd64 ./cmd/tester/...
+
+.PHONY: test
+test:
+	go vet ./...
+	go test -race -cover ./...
+
+.PHONY: generate
+generate:
+	go generate ./...
 
 .PHONY: build-image
 build-image:
-	docker build -t $(image):$(commit) .
+	docker build -t $(image):sha-$(commit) .
 ifdef LATEST
-	docker tag $(image):$(commit) $(image):latest
+	docker tag $(image):sha-$(commit) $(image):edge
 endif
 ifdef PUSH
-	docker push $(image):$(commit)
-	docker push $(image):latest
+	docker push $(image):sha-$(commit)
+	docker push $(image):edge
 endif
 
 .PHONY: install
-install: deps
-	pkger -o ./cmd/tester
+install:
 	go install ./cmd/tester/...

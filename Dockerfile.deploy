@@ -1,11 +1,13 @@
-FROM golang:1.15.4 AS build
+# Self-test image: tester scheduling and running its own db/http test
+# binaries, driven by ./config.json. Used for local end-to-end checks only.
+FROM golang:1.26 AS build
 COPY . /tester
 WORKDIR /tester
 RUN make build
 RUN go test -c -o ./dist/db.test ./db
 RUN go test -c -o ./dist/http.test ./http
 
-FROM golang:1.15.4
+FROM golang:1.26
 COPY --from=build /tester/dist/tester-linux-amd64 /bin/tester
 RUN mkdir -p /etc/tester
 COPY --from=build /tester/config.json /etc/tester/config.json

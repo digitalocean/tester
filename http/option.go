@@ -1,8 +1,8 @@
 package http
 
 import (
-	"github.com/nanzhong/tester/alerting"
-	"github.com/nanzhong/tester/slack"
+	"github.com/digitalocean/tester/alerting"
+	"github.com/digitalocean/tester/slack"
 )
 
 // Option is used to inject dependencies into a Server on creation.

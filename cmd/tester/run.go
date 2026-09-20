@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nanzhong/tester/runner"
+	"github.com/digitalocean/tester/runner"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

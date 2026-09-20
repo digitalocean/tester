@@ -3,9 +3,9 @@ package db
 import (
 	"database/sql"
 
+	"github.com/digitalocean/tester"
 	"github.com/jackc/pgx/v4"
 	"github.com/lib/pq"
-	"github.com/nanzhong/tester"
 )
 
 type pgTest tester.Test

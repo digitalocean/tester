@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/digitalocean/tester"
+	"github.com/digitalocean/tester/alerting"
+	"github.com/digitalocean/tester/db"
+	"github.com/digitalocean/tester/slack"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/nanzhong/tester"
-	"github.com/nanzhong/tester/alerting"
-	"github.com/nanzhong/tester/db"
-	"github.com/nanzhong/tester/slack"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

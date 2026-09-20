@@ -3,7 +3,7 @@ name: test
 on:
   push:
     branches:
-    - master
+      - main
   pull_request:
 
 jobs:
@@ -12,9 +12,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:12
+        image: postgres:16
         env:
-          POSTGRES_USER: user
+          POSTGRES_USER: tester
           POSTGRES_PASSWORD: password
           POSTGRES_DB: tester
         options: >-
@@ -23,14 +23,22 @@ jobs:
           --health-timeout 5s
           --health-retries 5
         ports:
-        - 5432:5432
+          - 5432:5432
 
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/setup-go@v2
-      with:
-        go-version: '^1.15.4'
-    - name: Test
-      run: go test -v -race -cover ./...
-      env:
-        PG_DSN: 'postgresql://user:password@localhost:5432/tester'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Generated code is current
+        run: |
+          go generate ./...
+          git diff --exit-code -- db/db_mock.go
+      - name: Test
+        run: go test -v -race -cover ./...
+        env:
+          PG_DSN: 'postgres://tester:password@localhost:5432/tester?sslmode=disable'

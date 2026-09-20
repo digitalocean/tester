@@ -12,9 +12,9 @@ dev/up:
 		--name tester-pg \
 		-e POSTGRES_USER=$(PG_USER) \
 		-e POSTGRES_PASSWORD=$(PG_PASS) \
-		-e POSTGERS_DB=$(PG_NAME) \
+		-e POSTGRES_DB=$(PG_NAME) \
 		-p $(PG_ADDR):5432 \
-		postgres:12
+		postgres:16
 
 .PHONY: dev/down
 dev/down:
@@ -26,7 +26,7 @@ dev/pg_dsn:
 
 .PHONY: dev/psql
 dev/psql:
-	docker run -it --rm --network=host postgres:12 psql $(PG_DSN)
+	docker run -it --rm --network=host postgres:16 psql $(PG_DSN)
 
 .PHONY: dev/test
 dev/test:

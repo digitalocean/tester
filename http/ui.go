@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalocean/tester"
+	"github.com/digitalocean/tester/db"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/nanzhong/tester"
-	"github.com/nanzhong/tester/db"
 	"golang.org/x/sync/errgroup"
 )
 
