@@ -101,6 +101,18 @@ tester run \
 
 Flags can be set as `RUN_*` environment variables.
 
+How a run's outcome is recorded:
+
+- exit 0 or 1 with at least one test result: the run completes; per-test
+  pass/fail/skip is what the tests reported (exit 1 is Go's "some tests
+  failed").
+- any exit status with **no** test results: the run fails, with the exit code
+  and the binary's stdout/stderr as the run error. This is the `TestMain`
+  bailed-out-during-setup case (missing credential, tool install or auth
+  failure); it is not a test outcome and completing it would hide the cause.
+- any other exit status (2 = panic/timeout, signal): the run fails with the
+  exit code and output.
+
 ## Development
 
 ```sh
