@@ -4,7 +4,7 @@
     <div class='col'><strong>Runs</strong></div>
   </div>
   <div class='row'>
-    <div class='col'>Total: {{ .NumRuns }} {{ if .NumErrorRuns }}<small>({{ .NumErrorRuns }} erred)</small>{{ end }}</div>
+    <div class='col'>Total: {{ .NumRuns }} {{ if .NumRunningRuns }}<small>({{ .NumRunningRuns }} running)</small>{{ end }} {{ if .NumErrorRuns }}<small>({{ .NumErrorRuns }} erred)</small>{{ end }}</div>
   </div>
   <hr>
   <div class='row'>
@@ -25,9 +25,20 @@
 </div>
 {{ end }}
 {{ define "run_summary_month_bar" }}
+{{ $state := summaryState . }}
+{{ if eq $state "results" }}
 <div class="bg-danger bg-gradient" style="min-height: calc(100% * {{ .PercentFailedTests }});"></div>
 <div class="bg-warning bg-gradient" style="min-height: calc(100% * {{ .PercentSkippedTests }});"></div>
 <div class="bg-success bg-gradient" style="min-height: calc(100% * {{ .PercentPassedTests }});"></div>
+{{ else if eq $state "errored" }}
+<div class="bg-danger bg-gradient" style="min-height: 100%;"></div>
+{{ else if eq $state "running" }}
+<div class="summary-running" style="min-height: 100%;"></div>
+{{ else if eq $state "active" }}
+<div class="summary-active" style="min-height: 100%;"></div>
+{{ else }}
+<div class="bg-light" style="min-height: 100%;"></div>
+{{ end }}
 {{ end }}
 {{ define "run_summary_month" }}
 <div class="border p-1">

@@ -878,6 +878,243 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 					},
 				},
 			}, summaries[0])
+
+			// pkg2run2 errored without submitting any tests; it must still
+			// appear in its bucket (the join to tests is a LEFT JOIN).
+			assert.Equal(t, &tester.PackageSummary{
+				Package:      "pkg-2",
+				RunIDs:       []uuid.UUID{pkg2run1.ID},
+				ErrorRunIDs:  []uuid.UUID{pkg2run2.ID},
+				PassedTests:  map[string][]uuid.UUID{"test-pass": {pkg2run1.Tests[0].ID}},
+				FailedTests:  map[string][]uuid.UUID{},
+				SkippedTests: map[string][]uuid.UUID{},
+			}, summaries[2].PackageSummary["pkg-2"])
 		})
 	})
+
+	t.Run("errored run with no tests appears in ErrorRunIDs", func(t *testing.T) {
+		withPG(t, func(tb testing.TB, pg *PG) {
+			begin := time.Now().UTC()
+			end := begin.Add(2 * time.Minute)
+			window := time.Minute
+
+			run := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin,
+				StartedAt:  begin.Add(10 * time.Second),
+				FinishedAt: begin.Add(20 * time.Second),
+				Error:      "killed",
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, run))
+
+			summaries, err := pg.ListRunSummariesInRange(ctx, begin, end, window)
+			require.NoError(t, err)
+			require.Len(t, summaries, 2)
+			assert.Equal(t, &tester.PackageSummary{
+				Package:      "pkg",
+				ErrorRunIDs:  []uuid.UUID{run.ID},
+				PassedTests:  map[string][]uuid.UUID{},
+				FailedTests:  map[string][]uuid.UUID{},
+				SkippedTests: map[string][]uuid.UUID{},
+			}, summaries[0].PackageSummary["pkg"])
+			assert.Empty(t, summaries[1].PackageSummary)
+		})
+	})
+
+	t.Run("errored run's tests are not counted", func(t *testing.T) {
+		withPG(t, func(tb testing.TB, pg *PG) {
+			begin := time.Now().UTC()
+			end := begin.Add(time.Minute)
+			window := time.Minute
+
+			run := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin,
+				StartedAt:  begin,
+				FinishedAt: begin.Add(10 * time.Second),
+				Error:      "exit status 2",
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, run))
+			require.NoError(t, pg.AddTest(ctx, &tester.Test{
+				ID: uuid.New(), RunID: run.ID, Package: run.Package,
+				Result: &tester.T{TB: tester.TB{Name: "test-pass", State: tester.TBStatePassed}},
+			}))
+
+			summaries, err := pg.ListRunSummariesInRange(ctx, begin, end, window)
+			require.NoError(t, err)
+			require.Len(t, summaries, 1)
+			ps := summaries[0].PackageSummary["pkg"]
+			require.NotNil(t, ps)
+			assert.Equal(t, []uuid.UUID{run.ID}, ps.ErrorRunIDs)
+			assert.Empty(t, ps.RunIDs)
+			assert.Equal(t, 0, ps.NumTotalTests())
+		})
+	})
+
+	t.Run("running run spans buckets and its tests are counted once", func(t *testing.T) {
+		withPG(t, func(tb testing.TB, pg *PG) {
+			begin := time.Now().UTC()
+			end := begin.Add(4 * time.Minute)
+			window := time.Minute
+
+			// "now" is 2m30s in: the run has been executing through buckets
+			// 0, 1 and 2 and must not appear in bucket 3.
+			pg.now = func() time.Time { return begin.Add(2*time.Minute + 30*time.Second) }
+
+			run := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin,
+				StartedAt:  begin.Add(30 * time.Second),
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, run))
+			test := &tester.Test{
+				ID: uuid.New(), RunID: run.ID, Package: run.Package,
+				Result: &tester.T{TB: tester.TB{Name: "test-pass", State: tester.TBStatePassed}},
+			}
+			require.NoError(t, pg.AddTest(ctx, test))
+
+			summaries, err := pg.ListRunSummariesInRange(ctx, begin, end, window)
+			require.NoError(t, err)
+			require.Len(t, summaries, 4)
+
+			assert.Equal(t, &tester.PackageSummary{
+				Package:       "pkg",
+				RunIDs:        []uuid.UUID{run.ID},
+				RunningRunIDs: []uuid.UUID{run.ID},
+				PassedTests:   map[string][]uuid.UUID{"test-pass": {test.ID}},
+				FailedTests:   map[string][]uuid.UUID{},
+				SkippedTests:  map[string][]uuid.UUID{},
+			}, summaries[0].PackageSummary["pkg"], "start bucket has the run and its tests")
+
+			for _, i := range []int{1, 2} {
+				assert.Equal(t, &tester.PackageSummary{
+					Package:       "pkg",
+					RunIDs:        []uuid.UUID{run.ID},
+					RunningRunIDs: []uuid.UUID{run.ID},
+					PassedTests:   map[string][]uuid.UUID{},
+					FailedTests:   map[string][]uuid.UUID{},
+					SkippedTests:  map[string][]uuid.UUID{},
+				}, summaries[i].PackageSummary["pkg"], "bucket %d has the run but not its tests", i)
+			}
+			assert.Empty(t, summaries[3].PackageSummary, "bucket after now is empty")
+
+			total := 0
+			for _, s := range summaries {
+				total += s.NumTotalTests()
+			}
+			assert.Equal(t, 1, total, "tests are counted exactly once across buckets")
+			assert.Equal(t, 1, summaries[1].NumRunningRuns())
+		})
+	})
+
+	t.Run("finished run spans the buckets it executed in", func(t *testing.T) {
+		withPG(t, func(tb testing.TB, pg *PG) {
+			begin := time.Now().UTC()
+			end := begin.Add(4 * time.Minute)
+			window := time.Minute
+
+			// Finishes exactly on the bucket 2 boundary: [started, finished)
+			// is half-open so it must not be attributed to bucket 2.
+			run := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin,
+				StartedAt:  begin.Add(30 * time.Second),
+				FinishedAt: begin.Add(2 * time.Minute),
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, run))
+			test := &tester.Test{
+				ID: uuid.New(), RunID: run.ID, Package: run.Package,
+				Result: &tester.T{TB: tester.TB{Name: "test-fail", State: tester.TBStateFailed}},
+			}
+			require.NoError(t, pg.AddTest(ctx, test))
+
+			summaries, err := pg.ListRunSummariesInRange(ctx, begin, end, window)
+			require.NoError(t, err)
+			require.Len(t, summaries, 4)
+
+			assert.Equal(t, []uuid.UUID{run.ID}, summaries[0].PackageSummary["pkg"].RunIDs)
+			assert.Equal(t, 1, summaries[0].NumFailedTests())
+			assert.Equal(t, []uuid.UUID{run.ID}, summaries[1].PackageSummary["pkg"].RunIDs)
+			assert.Empty(t, summaries[1].PackageSummary["pkg"].RunningRunIDs)
+			assert.Equal(t, 0, summaries[1].NumTotalTests())
+			assert.Empty(t, summaries[2].PackageSummary)
+			assert.Empty(t, summaries[3].PackageSummary)
+		})
+	})
+
+	t.Run("run that started before the range is attributed but its tests are not", func(t *testing.T) {
+		withPG(t, func(tb testing.TB, pg *PG) {
+			begin := time.Now().UTC()
+			end := begin.Add(2 * time.Minute)
+			window := time.Minute
+
+			// Started 30s before the range and finished 30s into it.
+			overlapping := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin.Add(-time.Minute),
+				StartedAt:  begin.Add(-30 * time.Second),
+				FinishedAt: begin.Add(30 * time.Second),
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, overlapping))
+			require.NoError(t, pg.AddTest(ctx, &tester.Test{
+				ID: uuid.New(), RunID: overlapping.ID, Package: overlapping.Package,
+				Result: &tester.T{TB: tester.TB{Name: "test-pass", State: tester.TBStatePassed}},
+			}))
+
+			// Finished before the range: must not appear at all.
+			earlier := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin.Add(-time.Minute),
+				StartedAt:  begin.Add(-40 * time.Second),
+				FinishedAt: begin.Add(-10 * time.Second),
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, earlier))
+
+			// Started exactly at end: the range is half-open, must not appear.
+			atEnd := &tester.Run{
+				ID:         uuid.New(),
+				Package:    "pkg",
+				EnqueuedAt: begin,
+				StartedAt:  end,
+				FinishedAt: end.Add(time.Second),
+			}
+			require.NoError(t, pg.EnqueueRun(ctx, atEnd))
+
+			summaries, err := pg.ListRunSummariesInRange(ctx, begin, end, window)
+			require.NoError(t, err)
+			require.Len(t, summaries, 2)
+			assert.Equal(t, &tester.PackageSummary{
+				Package:      "pkg",
+				RunIDs:       []uuid.UUID{overlapping.ID},
+				PassedTests:  map[string][]uuid.UUID{},
+				FailedTests:  map[string][]uuid.UUID{},
+				SkippedTests: map[string][]uuid.UUID{},
+			}, summaries[0].PackageSummary["pkg"])
+			assert.Empty(t, summaries[1].PackageSummary)
+		})
+	})
+}
+
+func TestBucketIndex(t *testing.T) {
+	for _, tc := range []struct {
+		offset time.Duration
+		want   int
+	}{
+		{0, 0},
+		{59 * time.Second, 0},
+		{time.Minute, 1},
+		{90 * time.Second, 1},
+		{-time.Nanosecond, -1},
+		{-30 * time.Second, -1},
+		{-time.Minute, -1},
+		{-61 * time.Second, -2},
+	} {
+		assert.Equal(t, tc.want, bucketIndex(tc.offset, time.Minute), "offset %s", tc.offset)
+	}
 }
