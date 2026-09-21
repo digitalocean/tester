@@ -49,12 +49,18 @@ go install github.com/digitalocean/tester/cmd/tester@latest
 tester --help
 ```
 
-Every push to `main` publishes
-`registry.digitalocean.com/do-e2e-canaries/tester:sha-<7>` and `:edge` via
-[`.github/workflows/image.yml`](.github/workflows/image.yml) (needs the
-`DOCR_E2E_CANARIES_REGISTRY_DOCKERPULLJSON` repository secret, a Docker
-`config.json` with push access). `digitalocean/e2e` pins one of the `sha-*`
-tags in its `Dockerfile`; App Platform pulls it from the same account.
+Every push to `main` publishes `registry.digitalocean.com/do-e2e-canaries/tester`
+with three tags via [`.github/workflows/image.yml`](.github/workflows/image.yml)
+(needs the `DOCR_E2E_CANARIES_REGISTRY_DOCKERPULLJSON` repository secret, a
+Docker `config.json` with push access):
+
+- `sha-<7>`: the commit.
+- `v0.<height>.0`: `height` is the first-parent commit count on `main`, so
+  these order monotonically. `digitalocean/e2e` pins this tag in its
+  `Dockerfile` so Dependabot can propose bumps (it cannot order `sha-*`).
+- `edge`: latest `main` build.
+
+App Platform pulls the image from DOCR in the same account.
 
 Scheduling is driven by Postgres, not by process memory: a package is
 enqueued only when it has no unfinished run and its last run was enqueued at
