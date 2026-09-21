@@ -20,7 +20,7 @@ import (
 	"github.com/digitalocean/tester/http/okta"
 	"github.com/digitalocean/tester/scheduler"
 	"github.com/digitalocean/tester/slack"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -64,11 +64,16 @@ var serveCmd = &cobra.Command{
 			log.Fatalf("failed to listen on %s", viper.GetString("serve-addr"))
 		}
 
-		pool, err := pgxpool.Connect(context.Background(), viper.GetString("serve-pg-dsn"))
+		pool, err := pgxpool.New(context.Background(), viper.GetString("serve-pg-dsn"))
 		if err != nil {
-			log.Fatalf("failed to connect to db at %s: %s", viper.GetString("serve-addr"), err)
+			log.Fatalf("failed to configure db pool: %s", err)
 		}
 		defer pool.Close()
+		// pgxpool.New connects lazily; ping so a bad DSN fails at startup.
+		err = pool.Ping(context.Background())
+		if err != nil {
+			log.Fatalf("failed to connect to db: %s", err)
+		}
 
 		dbStore := db.NewPG(pool)
 		err = dbStore.Init(context.Background())

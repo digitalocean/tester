@@ -11,8 +11,8 @@ import (
 	"github.com/digitalocean/tester"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,11 +38,10 @@ func withPG(tb testing.TB, fn func(tb testing.TB, pg *PG)) {
 	}()
 
 	pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%d/%s", cfg.User, cfg.Password, cfg.Host, cfg.Port, testDB)
-	pool, err := pgxpool.Connect(context.Background(), pgDSN)
-	if err != nil {
-		panic(err)
-	}
+	pool, err := pgxpool.New(context.Background(), pgDSN)
+	require.NoError(tb, err)
 	defer pool.Close()
+	require.NoError(tb, pool.Ping(context.Background()))
 
 	pg := NewPG(pool)
 	err = pg.Init(context.Background())
@@ -217,6 +216,28 @@ func TestPG_Test(t *testing.T) {
 				)
 			})
 		})
+	})
+}
+
+// TestPG_AddTest_NoLogs pins that a test with no log lines (nil Logs, as the
+// runner produces for a silent test) round-trips: pgx v5 would otherwise send
+// SQL NULL for the nil slice and violate the NOT NULL constraint on logs.
+func TestPG_AddTest_NoLogs(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		test := &tester.Test{
+			ID:      uuid.New(),
+			Package: "pkg",
+			RunID:   uuid.New(),
+			Result:  &tester.T{TB: tester.TB{Name: "quiet", State: tester.TBStatePassed}},
+		}
+		require.NoError(t, pg.AddTest(ctx, test))
+
+		got, err := pg.GetTest(ctx, test.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.Logs)
+		assert.Equal(t, test.Result, got.Result)
 	})
 }
 

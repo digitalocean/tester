@@ -11,10 +11,10 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/digitalocean/tester"
 	"github.com/google/uuid"
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
-	"github.com/jackc/tern/migrate"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/tern/v2/migrate"
 )
 
 var psq = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
@@ -208,7 +208,7 @@ func (p *PG) StartRun(ctx context.Context, id uuid.UUID, runner string) error {
 
 		uq := psq.Update("runs").
 			Set("started_at", p.now()).
-			Set("meta", r.Meta).
+			Set("meta", jsonb(r.Meta)).
 			Where("id = ?", id)
 
 		sql, args, err = uq.ToSql()
@@ -320,7 +320,7 @@ func (p *PG) ResetRun(ctx context.Context, id uuid.UUID) error {
 			"started_at":  sql.NullTime{},
 			"finished_at": sql.NullTime{},
 			"error":       sql.NullString{},
-			"meta":        tester.RunMeta{},
+			"meta":        jsonb(tester.RunMeta{}),
 			"enqueued_at": p.now(),
 		}).
 		Set("reset_count", sq.Expr("reset_count + 1")).
