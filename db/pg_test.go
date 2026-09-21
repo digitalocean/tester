@@ -105,6 +105,38 @@ func TestPG_Init_Autovacuum(t *testing.T) {
 	})
 }
 
+func TestPG_CheckSchema(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		// withPG has already run Init: the schema is current.
+		require.NoError(t, pg.CheckSchema(ctx))
+
+		// Roll back the last migration to simulate a server started before
+		// the migrate job ran; CheckSchema must fail and say why.
+		conn, err := pg.pool.Acquire(ctx)
+		require.NoError(t, err)
+		m, err := pg.migrator(ctx, conn.Conn())
+		require.NoError(t, err)
+		require.NoError(t, m.MigrateTo(ctx, int32(len(pgMigrations)-1)))
+		conn.Release()
+
+		err = pg.CheckSchema(ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf("version %d", len(pgMigrations)-1))
+		assert.Contains(t, err.Error(), fmt.Sprintf("expects %d", len(pgMigrations)))
+
+		// Migrating brings it back.
+		require.NoError(t, pg.Init(ctx))
+		require.NoError(t, pg.CheckSchema(ctx))
+
+		// A schema from a newer binary (rollback of the image) is tolerated.
+		_, err = pg.pool.Exec(ctx, "UPDATE versions SET version = version + 1")
+		require.NoError(t, err)
+		assert.NoError(t, pg.CheckSchema(ctx))
+	})
+}
+
 func TestPG_Test(t *testing.T) {
 	testTime := time.Now().Truncate(time.Millisecond)
 
