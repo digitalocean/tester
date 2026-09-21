@@ -78,4 +78,32 @@ DROP INDEX IF EXISTS runs_package_enqueued_at_idx;
 DROP INDEX IF EXISTS tests_run_id_idx;
 `,
 	},
+	{
+		name: "tune autovacuum for runs and tests",
+		up: `
+-- The default autovacuum scale factors (0.2 vacuum / 0.1 analyze / 0.2
+-- insert) are relative to table size. At production sizes (runs ~4.4M rows
+-- with ~900 non-HOT updates/day, tests ~12.6M insert-only rows) they would
+-- take months to trigger, so the visibility map and statistics go stale and
+-- index-only scans fall back to heap fetches. Use 1% plus a small absolute
+-- floor instead. Already applied by hand in production; ALTER TABLE SET is
+-- idempotent so re-applying there is a no-op.
+ALTER TABLE runs SET (
+  autovacuum_vacuum_scale_factor = 0.01,
+  autovacuum_vacuum_threshold = 1000,
+  autovacuum_analyze_scale_factor = 0.01,
+  autovacuum_analyze_threshold = 1000
+);
+ALTER TABLE tests SET (
+  autovacuum_vacuum_insert_scale_factor = 0.01,
+  autovacuum_vacuum_insert_threshold = 10000,
+  autovacuum_analyze_scale_factor = 0.01,
+  autovacuum_analyze_threshold = 10000
+);
+`,
+		down: `
+ALTER TABLE runs RESET (autovacuum_vacuum_scale_factor, autovacuum_vacuum_threshold, autovacuum_analyze_scale_factor, autovacuum_analyze_threshold);
+ALTER TABLE tests RESET (autovacuum_vacuum_insert_scale_factor, autovacuum_vacuum_insert_threshold, autovacuum_analyze_scale_factor, autovacuum_analyze_threshold);
+`,
+	},
 }
