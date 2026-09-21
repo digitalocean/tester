@@ -364,13 +364,15 @@ func (r *Runner) runOnce(ctx context.Context) error {
 
 	err = testCmd.Wait()
 	writer.Close()
+	exitCode := 0
 	if err != nil {
 		exitErr, ok := err.(*exec.ExitError)
 		if !ok {
 			return fmt.Errorf("running: %w", err)
 		}
+		exitCode = exitErr.ExitCode()
 
-		switch exitErr.ExitCode() {
+		switch exitCode {
 		// non 0 exit statuses are okay.
 		// eg. failed tests will result in exit status 1.
 		case 1:
@@ -403,6 +405,20 @@ func (r *Runner) runOnce(ctx context.Context) error {
 		return fmt.Errorf("processing events: %w", err)
 	}
 
+	// A test binary that exits without running a single test is a setup
+	// failure, not a result: TestMain typically os.Exit(1)s on a missing
+	// credential, a failed tool install or a failed auth call, which is
+	// indistinguishable from "some tests failed" by exit code alone. Completing
+	// the run here would record a finished run with zero tests and discard the
+	// only evidence of what went wrong, so fail it with the output instead.
+	if len(tests) == 0 {
+		errorMessage = emptyRunErrorMessage(exitCode, stdout.Bytes(), stderr.Bytes())
+		if err := r.failRun(run.ID, errorMessage); err != nil {
+			log.Printf("failed to mark run failed: %s", err)
+		}
+		return fmt.Errorf("run for %s produced no test results (exit code %d)", run.Package, exitCode)
+	}
+
 	var testIDs []uuid.UUID
 	for _, test := range tests {
 		test.RunID = run.ID
@@ -424,6 +440,29 @@ func (r *Runner) runOnce(ctx context.Context) error {
 
 	log.Printf("finished run for %s", run.Package)
 	return nil
+}
+
+// emptyRunOutputLimit bounds how much of each stream is kept in the run error
+// for a run that produced no tests. Setup failures are short; the tail is what
+// carries the error line.
+const emptyRunOutputLimit = 16 * 1024
+
+// emptyRunErrorMessage builds the run error recorded when a test binary exits
+// without producing any test results.
+func emptyRunErrorMessage(exitCode int, stdout, stderr []byte) string {
+	return fmt.Sprintf(
+		"Test run produced no test results (test binary exited before running any tests)\nExit Code: %d\nstdout:\n%s\nstderr:\n%s",
+		exitCode, tailBytes(stdout, emptyRunOutputLimit), tailBytes(stderr, emptyRunOutputLimit),
+	)
+}
+
+// tailBytes returns at most limit trailing bytes of b, prefixed with a marker
+// when truncated.
+func tailBytes(b []byte, limit int) []byte {
+	if len(b) <= limit {
+		return b
+	}
+	return append([]byte(fmt.Sprintf("... (%d bytes truncated)\n", len(b)-limit)), b[len(b)-limit:]...)
 }
 
 func (r *Runner) submitTestResult(test *tester.Test, run *tester.Run) error {
