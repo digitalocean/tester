@@ -1,11 +1,17 @@
 name: image
 
 # Publishes registry.digitalocean.com/do-e2e-canaries/tester. Every push to
-# main produces `sha-<7>` and `edge`. Pull requests only build, so the
-# Dockerfile is exercised before merge without touching the registry.
-# digitalocean/e2e pins one of the `sha-*` tags in its Dockerfile's `FROM`,
-# and App Platform pulls it natively from the same account, so no pull
-# secret or public visibility is needed.
+# main produces three tags:
+#   sha-<7>        the commit, for humans and for tracing an image back
+#   v0.<height>.0  height = first-parent commit count on main, so tags are
+#                  monotonically ordered; this is the tag digitalocean/e2e
+#                  pins in its Dockerfile FROM, because Dependabot can only
+#                  bump base images whose tags it can compare (sha-* is
+#                  opaque to it)
+#   edge           moving pointer to the latest main build
+# Pull requests only build, so the Dockerfile is exercised before merge
+# without touching the registry. App Platform pulls from DOCR in the same
+# account natively, so no pull secret or public visibility is needed.
 #
 # Requires the DOCR_E2E_CANARIES_REGISTRY_DOCKERPULLJSON repository secret:
 # a Docker config.json (`doctl registry docker-config --read-write`) whose
@@ -29,6 +35,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history so the first-parent height below is the real one.
+          fetch-depth: 0
+      - name: Compute version tag
+        id: version
+        run: |
+          height=$(git rev-list --count --first-parent HEAD)
+          echo "version=v0.${height}.0" >> "$GITHUB_OUTPUT"
+          echo "version tag: v0.${height}.0"
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -36,6 +51,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=sha,prefix=sha-,format=short
+            type=raw,value=${{ steps.version.outputs.version }},enable={{is_default_branch}}
             type=raw,value=edge,enable={{is_default_branch}}
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
