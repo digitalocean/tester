@@ -1,0 +1,49 @@
+# Dependabot version updates.
+#
+# Security updates are already enabled for this repo (see PR #1); this file
+# adds scheduled version updates.
+#
+# Grouping choices:
+#   - go.opentelemetry.io/* modules are released together and must stay on
+#     matching versions, so they are bumped in a single PR ("opentelemetry").
+#   - github.com/jackc/* (pgx and its companion modules) move in lockstep, so
+#     they are bumped in a single PR ("pgx").
+#   - All GitHub Actions are bumped in a single PR ("github-actions") to keep
+#     CI noise low; they are independent of each other and low-risk.
+#   - Docker base images are not grouped (only golang:* is used).
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
+    groups:
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
+      pgx:
+        patterns:
+          - "github.com/jackc/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: docker
