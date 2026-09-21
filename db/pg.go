@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -39,6 +40,26 @@ func NewPG(pool *pgxpool.Pool) *PG {
 	}
 }
 
+// migrator builds a tern Migrator on conn with pgMigrations appended. Every
+// migration that actually runs is logged, so both `tester serve` (when it
+// migrates at startup) and `tester migrate` show what they applied.
+func (p *PG) migrator(ctx context.Context, conn *pgx.Conn) (*migrate.Migrator, error) {
+	m, err := migrate.NewMigrator(ctx, conn, "versions")
+	if err != nil {
+		return nil, err
+	}
+	m.OnStart = func(sequence int32, name, direction, _ string) {
+		log.Printf("db: applying migration %d %q (%s)", sequence, name, direction)
+	}
+	for _, migration := range pgMigrations {
+		m.AppendMigration(migration.name, migration.up, migration.down)
+	}
+	return m, nil
+}
+
+// Init applies any pending migrations from pgMigrations, under tern's
+// advisory lock and each in its own transaction. It is a no-op when the
+// schema is already current.
 func (p *PG) Init(ctx context.Context) error {
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
@@ -46,16 +67,44 @@ func (p *PG) Init(ctx context.Context) error {
 	}
 	defer conn.Release()
 
-	m, err := migrate.NewMigrator(ctx, conn.Conn(), "versions")
+	m, err := p.migrator(ctx, conn.Conn())
 	if err != nil {
 		return err
 	}
-
-	for _, migration := range pgMigrations {
-		m.AppendMigration(migration.name, migration.up, migration.down)
-	}
-
 	return m.Migrate(ctx)
+}
+
+// CheckSchema verifies that every migration in pgMigrations has been applied
+// without applying anything. It is for processes that must not migrate (a
+// server whose migrations run in a separate pre-deploy job): the returned
+// error names the current and expected versions so a deploy that started the
+// server before migrating fails fast instead of serving a stale schema.
+//
+// A schema newer than this binary knows about is tolerated so that rolling
+// back to a previous image does not take the server down; migrations are
+// expected to stay backwards compatible for one release. Building the
+// migrator takes tern's advisory lock briefly, so this blocks while another
+// process is mid-migration and reports the post-migration version.
+func (p *PG) CheckSchema(ctx context.Context) error {
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	m, err := p.migrator(ctx, conn.Conn())
+	if err != nil {
+		return err
+	}
+	current, err := m.GetCurrentVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("reading schema version: %w", err)
+	}
+	expected := int32(len(pgMigrations))
+	if current < expected {
+		return fmt.Errorf("database schema is at version %d, this binary expects %d: run `tester migrate`", current, expected)
+	}
+	return nil
 }
 
 func (p *PG) tx(ctx context.Context, f func(tx pgx.Tx) error) error {

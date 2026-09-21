@@ -76,9 +76,19 @@ var serveCmd = &cobra.Command{
 		}
 
 		dbStore := db.NewPG(pool)
-		err = dbStore.Init(context.Background())
-		if err != nil {
-			log.Fatalf("failed to init db: %s", err)
+		if viper.GetBool("serve-migrate-on-start") {
+			err = dbStore.Init(context.Background())
+			if err != nil {
+				log.Fatalf("failed to init db: %s", err)
+			}
+		} else {
+			// Migrations are someone else's job (`tester migrate` in a
+			// pre-deploy step); refuse to serve against a stale schema.
+			log.Print("--migrate-on-start=false, skipping migrations")
+			err = dbStore.CheckSchema(context.Background())
+			if err != nil {
+				log.Fatalf("database schema is not current: %s", err)
+			}
 		}
 
 		var httpOpts []testerhttp.Option
@@ -235,6 +245,9 @@ func init() {
 
 	serveCmd.Flags().String("pg-dsn", "", "The postgresql dsn to use.")
 	viper.BindPFlag("serve-pg-dsn", serveCmd.Flags().Lookup("pg-dsn"))
+
+	serveCmd.Flags().Bool("migrate-on-start", true, "Apply pending database migrations at startup. Set false when `tester migrate` runs them in a pre-deploy job; the server then only verifies the schema is current.")
+	viper.BindPFlag("serve-migrate-on-start", serveCmd.Flags().Lookup("migrate-on-start"))
 
 	serveCmd.Flags().String("api-key", "", "Symmetric key for API Auth")
 	viper.BindPFlag("serve-api-key", serveCmd.Flags().Lookup("api-key"))
