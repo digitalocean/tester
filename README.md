@@ -87,6 +87,15 @@ Slack alerting and the `/tester` slash command need `--slack-access-token` and
 `--okta-client-secret`, `--okta-issuer`, `--okta-redirect-uri` and
 `--okta-session-key`.
 
+#### Database migrations
+
+`tester serve` runs the migrations in `db/pg_migrations.go` at startup via
+[tern](https://github.com/jackc/tern), under an advisory lock and each in its
+own transaction. Long-running DDL such as index builds on large tables should
+be applied by hand first with `CREATE INDEX CONCURRENTLY` (which cannot run in
+a transaction) and then declared in a migration with `IF NOT EXISTS` and the
+same name, so the migration is a no-op in production.
+
 ### Runner
 
 ```sh
