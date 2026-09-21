@@ -33,7 +33,7 @@ Epic: MARSOHS-1585. Children covered here: MARSOHS-1592 (bootstrap), MARSOHS-158
 - `go 1.25`; dependencies upgraded in place (pgx stays on v4, tern on v1, to keep the DB layer diff small). `github.com/golang/mock` is archived; switch to `go.uber.org/mock` and regenerate `db/db_mock.go`.
 - `pkger` (archived) replaced with `embed` for `http/templates`.
 - Dockerfiles move to `golang:1.25`. The runtime image stays a `golang` image because the runner shells out to `go tool test2json`.
-- CI: `test.yml` runs `go vet` and `go test -race` against a Postgres service on `main`/PRs. `image.yml` publishes `ghcr.io/digitalocean/tester:sha-<8>` and `:edge` from `main`; GHCR needs no extra secrets. `digitalocean/e2e`'s `Dockerfile` will switch its `FROM` to this image in a follow-up PR there.
+- CI: `test.yml` runs `go vet` and `go test -race` against a Postgres service on `main`/PRs. `image.yml` publishes `registry.digitalocean.com/do-e2e-canaries/tester:sha-<7>` and `:edge` from `main` (PRs build only); needs a `DOCR_TOKEN` secret. `digitalocean/e2e`'s `Dockerfile` will switch its `FROM` to this image in a follow-up PR there.
 - `README.md` replaces `README.org`: fork purpose, how it is deployed, link to the epic.
 
 ### PR 2: scheduler and claim (MARSOHS-1586, 1587, 1588, 1589)
