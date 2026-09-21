@@ -74,6 +74,38 @@ func TestPG_Init_Indexes(t *testing.T) {
 	})
 }
 
+// TestPG_Init_Autovacuum asserts the per-table autovacuum reloptions declared
+// by the "tune autovacuum for runs and tests" migration are present after Init.
+func TestPG_Init_Autovacuum(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		for _, tc := range []struct {
+			table string
+			want  []string
+		}{
+			{"runs", []string{
+				"autovacuum_vacuum_scale_factor=0.01",
+				"autovacuum_vacuum_threshold=1000",
+				"autovacuum_analyze_scale_factor=0.01",
+				"autovacuum_analyze_threshold=1000",
+			}},
+			{"tests", []string{
+				"autovacuum_vacuum_insert_scale_factor=0.01",
+				"autovacuum_vacuum_insert_threshold=10000",
+				"autovacuum_analyze_scale_factor=0.01",
+				"autovacuum_analyze_threshold=10000",
+			}},
+		} {
+			var opts []string
+			err := pg.pool.QueryRow(ctx, "SELECT coalesce(reloptions, '{}') FROM pg_class WHERE relname = $1 AND relkind = 'r'", tc.table).Scan(&opts)
+			require.NoError(t, err)
+			tb.Logf("%s reloptions: %v", tc.table, opts)
+			assert.ElementsMatch(t, tc.want, opts, "reloptions on %s", tc.table)
+		}
+	})
+}
+
 func TestPG_Test(t *testing.T) {
 	testTime := time.Now().Truncate(time.Millisecond)
 
