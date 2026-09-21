@@ -68,6 +68,21 @@ func TestPG_Init_Indexes(t *testing.T) {
 			tb.Log(def)
 		}
 
+		// Indexes superseded by the ones above are dropped by a later
+		// migration (by hand with DROP INDEX CONCURRENTLY in production, where
+		// the migration is a no-op). They are created by "initial", so a fresh
+		// database exercises the DROP.
+		for _, idx := range []struct{ table, name string }{
+			{"runs", "runs_package_idx"},
+			{"runs", "runs_enqueued_at_started_at_idx"},
+			{"tests", "tests_package_idx"},
+		} {
+			var n int
+			err := pg.pool.QueryRow(ctx, "SELECT count(*) FROM pg_indexes WHERE tablename = $1 AND indexname = $2", idx.table, idx.name).Scan(&n)
+			require.NoError(t, err)
+			assert.Zero(t, n, "index %s on %s must not exist after Init", idx.name, idx.table)
+		}
+
 		// Init is run at every server start; re-running it must be a no-op.
 		require.NoError(t, pg.Init(ctx))
 	})

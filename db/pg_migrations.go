@@ -106,4 +106,33 @@ ALTER TABLE runs RESET (autovacuum_vacuum_scale_factor, autovacuum_vacuum_thresh
 ALTER TABLE tests RESET (autovacuum_vacuum_insert_scale_factor, autovacuum_vacuum_insert_threshold, autovacuum_analyze_scale_factor, autovacuum_analyze_threshold);
 `,
 	},
+	{
+		name: "drop indexes superseded by tests_run_id_idx and runs_package_enqueued_at_idx",
+		up: `
+-- runs_package_idx (package) is a strict prefix of runs_package_enqueued_at_idx
+-- (package, enqueued_at DESC) INCLUDE (finished_at), which serves every
+-- package = $1 predicate on runs (ScheduleRun, ListRunsForPackage).
+-- runs_enqueued_at_started_at_idx was only ever picked for the old
+-- ListRunsForPackage plan (backward scan + package filter), which now uses
+-- the covering index. ClaimRun uses runs_finished_at_idx.
+-- tests_package_idx (package) is not needed by any production query: the
+-- package page (ListTestsForPackageInRange) is served by tests_expr_idx on
+-- (result->'started_at'); when the planner BitmapAnd-ed tests_package_idx
+-- into that plan it was 10-100x slower than the tests_expr_idx-only plan.
+--
+-- In production these are dropped by hand first with DROP INDEX CONCURRENTLY
+-- (tern runs migrations in a transaction, which CONCURRENTLY does not allow,
+-- and a plain DROP INDEX takes an ACCESS EXCLUSIVE lock on the table -- brief,
+-- but it would block inserts on tests at app startup). IF EXISTS makes this
+-- a no-op there; it drops the indexes on databases created by "initial".
+DROP INDEX IF EXISTS runs_package_idx;
+DROP INDEX IF EXISTS runs_enqueued_at_started_at_idx;
+DROP INDEX IF EXISTS tests_package_idx;
+`,
+		down: `
+CREATE INDEX IF NOT EXISTS tests_package_idx ON tests (package);
+CREATE INDEX IF NOT EXISTS runs_enqueued_at_started_at_idx ON runs (enqueued_at, started_at);
+CREATE INDEX IF NOT EXISTS runs_package_idx ON runs (package);
+`,
+	},
 }
