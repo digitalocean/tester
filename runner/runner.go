@@ -19,7 +19,9 @@ import (
 
 	"github.com/digitalocean/tester"
 	testerhttp "github.com/digitalocean/tester/http"
+	"github.com/digitalocean/tester/telemetry"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var (
@@ -306,11 +308,21 @@ func (r *Runner) claimRun(ctx context.Context) (*tester.Run, error) {
 func (r *Runner) runOnce(ctx context.Context) error {
 	run, err := r.claimRun(ctx)
 	if err != nil {
+		telemetry.RunnerPolls.Add(ctx, 1, metric.WithAttributes(telemetry.AttrResult.String(telemetry.ResultError)))
 		return fmt.Errorf("claiming run: %w", err)
 	}
 	if run == nil {
+		telemetry.RunnerPolls.Add(ctx, 1, metric.WithAttributes(telemetry.AttrResult.String(telemetry.ResultEmpty)))
 		return nil
 	}
+	telemetry.RunnerPolls.Add(ctx, 1, metric.WithAttributes(telemetry.AttrResult.String(telemetry.ResultClaimed)))
+
+	claimedAt := time.Now()
+	result := telemetry.ResultError
+	defer func() {
+		telemetry.RunnerRunDuration.Record(ctx, telemetry.Seconds(time.Since(claimedAt)),
+			metric.WithAttributes(telemetry.AttrPackage.String(run.Package), telemetry.AttrResult.String(result)))
+	}()
 
 	pkg, err := r.getPackageInfo(ctx, run.Package)
 	if err != nil {
@@ -379,6 +391,7 @@ func (r *Runner) runOnce(ctx context.Context) error {
 			if err := r.failRun(run.ID, errorMessage); err != nil {
 				log.Printf("failed to mark run failed: %s", err)
 			}
+			result = telemetry.ResultFailed
 			return exitErr
 		}
 	}
@@ -421,6 +434,7 @@ func (r *Runner) runOnce(ctx context.Context) error {
 	if err != nil {
 		log.Printf("failed to mark run complete: %s", err)
 	}
+	result = telemetry.ResultCompleted
 
 	log.Printf("finished run for %s", run.Package)
 	return nil

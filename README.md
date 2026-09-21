@@ -95,6 +95,40 @@ tester run \
 
 Flags can be set as `RUN_*` environment variables.
 
+## Metrics
+
+Both `tester serve` and `tester run` push metrics over OTLP/HTTP; there is no
+`/metrics` endpoint to scrape. Export is configured entirely through the
+standard OpenTelemetry environment variables and is off when no endpoint is
+set:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-nyc3.digitalocean.com:443
+OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer $DO_API_TOKEN"
+OTEL_EXPORTER_OTLP_COMPRESSION=gzip
+OTEL_SERVICE_NAME=tester            # tester-runner for workers
+OTEL_METRIC_EXPORT_INTERVAL=60000   # ms, optional
+```
+
+`service.instance.id` defaults to the hostname; override with
+`OTEL_RESOURCE_ATTRIBUTES=service.instance.id=...`.
+
+| metric | kind | attributes | source |
+| --- | --- | --- | --- |
+| `tester.test.duration` (s) | histogram | `name`, `state` | server |
+| `tester.test.last_run` (unix s) | gauge | `name`, `state` | server |
+| `tester.run.queue_wait` (s) | histogram | `package` | server |
+| `tester.run.duration` (s) | histogram | `package`, `result` | server |
+| `tester.run.claims` | counter | `result` = claimed / empty / error | server |
+| `tester.run.scheduled` | counter | `package` | server |
+| `tester.run.reset` | counter | `package`, `result` = reset / failed | server |
+| `tester.runs.pending` | gauge | `package`, `state` = queued / running | server |
+| `tester.runner.polls` | counter | `result` = claimed / empty / error | runner |
+| `tester.runner.run.duration` (s) | histogram | `package`, `result` | runner |
+
+`tester.test.duration` keeps the bucket boundaries of the Prometheus
+`tester_tb_run_duration_s` histogram it replaces.
+
 ## Development
 
 ```sh

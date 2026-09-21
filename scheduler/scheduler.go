@@ -12,7 +12,9 @@ import (
 
 	"github.com/digitalocean/tester"
 	"github.com/digitalocean/tester/db"
+	"github.com/digitalocean/tester/telemetry"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -202,6 +204,7 @@ func (s *Scheduler) scheduleRuns(ctx context.Context) error {
 			continue
 		}
 		if scheduled {
+			telemetry.RunScheduled.Add(ctx, 1, metric.WithAttributes(telemetry.AttrPackage.String(pkg.Name)))
 			log.Printf("scheduled run %s", pkg.Name)
 		}
 	}
@@ -253,6 +256,8 @@ func (s *Scheduler) resetStaleRuns(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("failing timed out run %s (%s): %w", run.ID, run.Package, err)
 			}
+			telemetry.RunReset.Add(ctx, 1, metric.WithAttributes(
+				telemetry.AttrPackage.String(run.Package), telemetry.AttrResult.String(telemetry.ResultFailed)))
 			log.Printf("failed run %s (%s): exceeded run timeout %d time(s)", run.Package, run.ID, run.ResetCount+1)
 			continue
 		}
@@ -264,6 +269,8 @@ func (s *Scheduler) resetStaleRuns(ctx context.Context) error {
 			}
 			return err
 		}
+		telemetry.RunReset.Add(ctx, 1, metric.WithAttributes(
+			telemetry.AttrPackage.String(run.Package), telemetry.AttrResult.String(telemetry.ResultReset)))
 		log.Printf("reset run %s (%s): exceeded run timeout, attempt %d of %d", run.Package, run.ID, run.ResetCount+2, s.maxResets+1)
 	}
 
