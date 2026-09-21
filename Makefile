@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 commit ?= $(shell git rev-parse --short HEAD)
-image := ghcr.io/digitalocean/tester
+image := registry.digitalocean.com/do-e2e-canaries/tester
 
 include ./dev/dev.mk
 

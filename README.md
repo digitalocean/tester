@@ -49,9 +49,12 @@ go install github.com/digitalocean/tester/cmd/tester@latest
 tester --help
 ```
 
-Every push to `main` publishes `ghcr.io/digitalocean/tester:sha-<8>` and
-`:edge` via [`.github/workflows/image.yml`](.github/workflows/image.yml).
-`digitalocean/e2e` pins one of the `sha-*` tags in its `Dockerfile`.
+Every push to `main` publishes
+`registry.digitalocean.com/do-e2e-canaries/tester:sha-<7>` and `:edge` via
+[`.github/workflows/image.yml`](.github/workflows/image.yml) (needs the
+`DOCR_E2E_CANARIES_REGISTRY_DOCKERPULLJSON` repository secret, a Docker
+`config.json` with push access). `digitalocean/e2e` pins one of the `sha-*`
+tags in its `Dockerfile`; App Platform pulls it from the same account.
 
 Scheduling is driven by Postgres, not by process memory: a package is
 enqueued only when it has no unfinished run and its last run was enqueued at
