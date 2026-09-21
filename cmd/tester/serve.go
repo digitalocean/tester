@@ -20,7 +20,7 @@ import (
 	"github.com/digitalocean/tester/http/okta"
 	"github.com/digitalocean/tester/scheduler"
 	"github.com/digitalocean/tester/slack"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -64,16 +64,31 @@ var serveCmd = &cobra.Command{
 			log.Fatalf("failed to listen on %s", viper.GetString("serve-addr"))
 		}
 
-		pool, err := pgxpool.Connect(context.Background(), viper.GetString("serve-pg-dsn"))
+		pool, err := pgxpool.New(context.Background(), viper.GetString("serve-pg-dsn"))
 		if err != nil {
-			log.Fatalf("failed to connect to db at %s: %s", viper.GetString("serve-addr"), err)
+			log.Fatalf("failed to configure db pool: %s", err)
 		}
 		defer pool.Close()
+		// pgxpool.New connects lazily; ping so a bad DSN fails at startup.
+		err = pool.Ping(context.Background())
+		if err != nil {
+			log.Fatalf("failed to connect to db: %s", err)
+		}
 
 		dbStore := db.NewPG(pool)
-		err = dbStore.Init(context.Background())
-		if err != nil {
-			log.Fatalf("failed to init db: %s", err)
+		if viper.GetBool("serve-migrate-on-start") {
+			err = dbStore.Init(context.Background())
+			if err != nil {
+				log.Fatalf("failed to init db: %s", err)
+			}
+		} else {
+			// Migrations are someone else's job (`tester migrate` in a
+			// pre-deploy step); refuse to serve against a stale schema.
+			log.Print("--migrate-on-start=false, skipping migrations")
+			err = dbStore.CheckSchema(context.Background())
+			if err != nil {
+				log.Fatalf("database schema is not current: %s", err)
+			}
 		}
 
 		var httpOpts []testerhttp.Option
@@ -230,6 +245,9 @@ func init() {
 
 	serveCmd.Flags().String("pg-dsn", "", "The postgresql dsn to use.")
 	viper.BindPFlag("serve-pg-dsn", serveCmd.Flags().Lookup("pg-dsn"))
+
+	serveCmd.Flags().Bool("migrate-on-start", true, "Apply pending database migrations at startup. Set false when `tester migrate` runs them in a pre-deploy job; the server then only verifies the schema is current.")
+	viper.BindPFlag("serve-migrate-on-start", serveCmd.Flags().Lookup("migrate-on-start"))
 
 	serveCmd.Flags().String("api-key", "", "Symmetric key for API Auth")
 	viper.BindPFlag("serve-api-key", serveCmd.Flags().Lookup("api-key"))

@@ -11,8 +11,8 @@ import (
 	"github.com/digitalocean/tester"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,11 +38,10 @@ func withPG(tb testing.TB, fn func(tb testing.TB, pg *PG)) {
 	}()
 
 	pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%d/%s", cfg.User, cfg.Password, cfg.Host, cfg.Port, testDB)
-	pool, err := pgxpool.Connect(context.Background(), pgDSN)
-	if err != nil {
-		panic(err)
-	}
+	pool, err := pgxpool.New(context.Background(), pgDSN)
+	require.NoError(tb, err)
 	defer pool.Close()
+	require.NoError(tb, pool.Ping(context.Background()))
 
 	pg := NewPG(pool)
 	err = pg.Init(context.Background())
@@ -103,6 +102,38 @@ func TestPG_Init_Autovacuum(t *testing.T) {
 			tb.Logf("%s reloptions: %v", tc.table, opts)
 			assert.ElementsMatch(t, tc.want, opts, "reloptions on %s", tc.table)
 		}
+	})
+}
+
+func TestPG_CheckSchema(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		// withPG has already run Init: the schema is current.
+		require.NoError(t, pg.CheckSchema(ctx))
+
+		// Roll back the last migration to simulate a server started before
+		// the migrate job ran; CheckSchema must fail and say why.
+		conn, err := pg.pool.Acquire(ctx)
+		require.NoError(t, err)
+		m, err := pg.migrator(ctx, conn.Conn())
+		require.NoError(t, err)
+		require.NoError(t, m.MigrateTo(ctx, int32(len(pgMigrations)-1)))
+		conn.Release()
+
+		err = pg.CheckSchema(ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf("version %d", len(pgMigrations)-1))
+		assert.Contains(t, err.Error(), fmt.Sprintf("expects %d", len(pgMigrations)))
+
+		// Migrating brings it back.
+		require.NoError(t, pg.Init(ctx))
+		require.NoError(t, pg.CheckSchema(ctx))
+
+		// A schema from a newer binary (rollback of the image) is tolerated.
+		_, err = pg.pool.Exec(ctx, "UPDATE versions SET version = version + 1")
+		require.NoError(t, err)
+		assert.NoError(t, pg.CheckSchema(ctx))
 	})
 }
 
@@ -217,6 +248,28 @@ func TestPG_Test(t *testing.T) {
 				)
 			})
 		})
+	})
+}
+
+// TestPG_AddTest_NoLogs pins that a test with no log lines (nil Logs, as the
+// runner produces for a silent test) round-trips: pgx v5 would otherwise send
+// SQL NULL for the nil slice and violate the NOT NULL constraint on logs.
+func TestPG_AddTest_NoLogs(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		test := &tester.Test{
+			ID:      uuid.New(),
+			Package: "pkg",
+			RunID:   uuid.New(),
+			Result:  &tester.T{TB: tester.TB{Name: "quiet", State: tester.TBStatePassed}},
+		}
+		require.NoError(t, pg.AddTest(ctx, test))
+
+		got, err := pg.GetTest(ctx, test.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.Logs)
+		assert.Equal(t, test.Result, got.Result)
 	})
 }
 

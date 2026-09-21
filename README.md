@@ -16,6 +16,8 @@ fork is tracked under Jira epic
   serves the UI and the runner API, alerts on failures. State is in Postgres.
 - **Runner** (`tester run`): claims runs from the server, executes the test
   binary, streams results back. Any number of runners can share a server.
+- **Migrate** (`tester migrate`): applies pending database migrations and
+  exits, for running as a pre-deploy step instead of at server startup.
 - **Configuration**: one JSON file shared by server and runners.
 
 ```jsonc
@@ -76,11 +78,12 @@ tester serve \
   --base-url https://e2e.example.com \
   --api-key "$API_KEY" \
   --config /etc/tester/config.json \
-  --pg-dsn "$PG_DSN"
+  --pg-dsn "$PG_DSN" \
+  --migrate-on-start=false   # default true; see Database migrations
 ```
 
 Every flag can also be set as an environment variable prefixed with `SERVE_`
-(`SERVE_API_KEY`, `SERVE_PG_DSN`, ...).
+(`SERVE_API_KEY`, `SERVE_PG_DSN`, `SERVE_MIGRATE_ON_START`, ...).
 
 Slack alerting and the `/tester` slash command need `--slack-access-token` and
 `--slack-signing-secret`. Okta login for the UI needs `--okta-client-id`,
@@ -89,12 +92,70 @@ Slack alerting and the `/tester` slash command need `--slack-access-token` and
 
 #### Database migrations
 
-`tester serve` runs the migrations in `db/pg_migrations.go` at startup via
+Migrations live in `db/pg_migrations.go` and are applied via
 [tern](https://github.com/jackc/tern), under an advisory lock and each in its
-own transaction. Long-running DDL such as index builds on large tables should
-be applied by hand first with `CREATE INDEX CONCURRENTLY` (which cannot run in
-a transaction) and then declared in a migration with `IF NOT EXISTS` and the
-same name, so the migration is a no-op in production.
+own transaction. Every migration that runs is logged. Long-running DDL such as
+index builds on large tables should be applied by hand first with
+`CREATE INDEX CONCURRENTLY` (which cannot run in a transaction) and then
+declared in a migration with `IF NOT EXISTS` and the same name, so the
+migration is a no-op in production.
+
+There are two ways to run them:
+
+- **At server startup** (the default, `--migrate-on-start=true`):
+  `tester serve` migrates before it listens. Simple, but
+  the migration then runs inside the web container's health-check window (a
+  slow one makes the deploy look unhealthy and roll back mid-migration),
+  several web replicas serialize on the advisory lock, and `worker` replicas
+  roll independently so they may briefly run against a not-yet-migrated
+  schema.
+- **As a separate step** with `tester migrate`, which applies pending
+  migrations and exits 0 (non-zero on failure). Run it once per deploy before
+  anything else starts, and start the server with `--migrate-on-start=false`
+  (or `SERVE_MIGRATE_ON_START=false`): `tester serve` then only checks the
+  schema version and refuses to start (`database schema is at version N, this
+  binary expects M`) if the migrate step was skipped, rather than serving
+  against a stale schema. A schema *newer* than the binary is accepted so the
+  image can be rolled back.
+
+```sh
+tester migrate --pg-dsn "$PG_DSN"   # or MIGRATE_PG_DSN / SERVE_PG_DSN in the environment
+```
+
+`migrate` does not read the config file; it only needs the DSN. It falls back
+to `SERVE_PG_DSN` so the job can copy the web service's environment verbatim.
+
+On App Platform this is a `PRE_DEPLOY` job, which runs to completion before
+any component of the new deployment is started. The app spec lives in
+`digitalocean/e2e`, not here; the job uses the same image and DB env as `web`
+(`tester` is `/bin/tester` in the image, and `serve`/`run` are invoked the
+same way):
+
+```yaml
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    image:                    # same image reference as the web/worker components
+      registry_type: DOCR
+      registry: do-e2e-canaries
+      repository: <e2e image repository>
+      tag: <same tag as web/worker>
+    run_command: tester migrate
+    envs:
+      - key: SERVE_PG_DSN     # same DB env as web; MIGRATE_PG_DSN also works
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+```
+
+Rollout order for switching an existing app over:
+
+1. Deploy an image containing `tester migrate` with `--migrate-on-start` left
+   at its default (true). Nothing changes yet.
+2. Add the `PRE_DEPLOY` job to the app spec. Both the job and the server now
+   migrate; the second is a no-op.
+3. On the `web` component of the app spec, set `SERVE_MIGRATE_ON_START=false`
+   in `envs` (or add `--migrate-on-start=false` to its `run_command`). No
+   image rebuild is needed. The server now only verifies the schema.
 
 ### Runner
 
