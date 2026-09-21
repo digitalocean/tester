@@ -23,6 +23,12 @@ on:
       - main
   pull_request:
 
+# Pushes to a PR branch cancel that PR's still-running jobs; each main push
+# gets its own group so main runs never cancel or queue behind each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
