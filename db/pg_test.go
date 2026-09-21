@@ -52,6 +52,28 @@ func withPG(tb testing.TB, fn func(tb testing.TB, pg *PG)) {
 	fn(tb, pg)
 }
 
+// TestPG_Init_Indexes pins the names of the indexes that are built out of band
+// with CREATE INDEX CONCURRENTLY in production; the migration declaring them
+// uses IF NOT EXISTS and is only a no-op there if the names match exactly.
+func TestPG_Init_Indexes(t *testing.T) {
+	ctx := context.Background()
+
+	withPG(t, func(tb testing.TB, pg *PG) {
+		for _, idx := range []struct{ table, name string }{
+			{"tests", "tests_run_id_idx"},
+			{"runs", "runs_package_enqueued_at_idx"},
+		} {
+			var def string
+			err := pg.pool.QueryRow(ctx, "SELECT indexdef FROM pg_indexes WHERE tablename = $1 AND indexname = $2", idx.table, idx.name).Scan(&def)
+			require.NoError(t, err, "index %s on %s must exist after Init", idx.name, idx.table)
+			tb.Log(def)
+		}
+
+		// Init is run at every server start; re-running it must be a no-op.
+		require.NoError(t, pg.Init(ctx))
+	})
+}
+
 func TestPG_Test(t *testing.T) {
 	testTime := time.Now().Truncate(time.Millisecond)
 

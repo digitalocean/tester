@@ -62,4 +62,20 @@ ALTER TABLE runs ADD COLUMN reset_count integer NOT NULL DEFAULT 0;
 ALTER TABLE runs DROP COLUMN reset_count;
 `,
 	},
+	{
+		name: "add tests run_id index and runs package covering index",
+		up: `
+-- Built out of band with CREATE INDEX CONCURRENTLY on the production
+-- cluster (tern runs migrations in a transaction, which CONCURRENTLY does
+-- not allow, and a plain CREATE INDEX would lock tests for minutes at
+-- startup). IF NOT EXISTS makes this a no-op there; it creates the indexes
+-- on fresh databases. Names must match the hand-built ones exactly.
+CREATE INDEX IF NOT EXISTS tests_run_id_idx ON tests (run_id);
+CREATE INDEX IF NOT EXISTS runs_package_enqueued_at_idx ON runs (package, enqueued_at DESC) INCLUDE (finished_at);
+`,
+		down: `
+DROP INDEX IF EXISTS runs_package_enqueued_at_idx;
+DROP INDEX IF EXISTS tests_run_id_idx;
+`,
+	},
 }
