@@ -119,8 +119,11 @@ func (h *AuthHandler) AuthCodeCallbackHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	session.Values["id_token"] = exchange.IDToken
-	session.Values["access_token"] = exchange.AccessToken
+	// The ID token has been verified above. Don't keep the raw tokens in the
+	// cookie: with a large groups claim they exceed securecookie's 4096 byte
+	// limit. Only a marker is needed to flag the session as authenticated.
+	session.Values[sessionIDTokenKey] = "verified"
+	delete(session.Values, "nonce")
 	err = session.Save(r, w)
 	if err != nil {
 		h.errorWriter(w, r, err, http.StatusInternalServerError)
