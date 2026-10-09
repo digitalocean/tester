@@ -103,6 +103,13 @@ func (o *Option) String() string {
 	return fmt.Sprintf("-%s=%s", o.Name, o.Value)
 }
 
+// RunSummary aggregates the runs and test results that fall in the time
+// bucket [Time, Time+Duration), grouped by package.
+//
+// A run is attributed to every bucket it was executing in, from started_at to
+// finished_at (or now, if it is still running), so a long run shows up in
+// several consecutive buckets. Its test results are only counted in the bucket
+// it started in.
 type RunSummary struct {
 	Time           time.Time
 	Duration       time.Duration
@@ -112,7 +119,7 @@ type RunSummary struct {
 func (s *RunSummary) NumRuns() int {
 	var total int
 	for _, pkgSummary := range s.PackageSummary {
-		total += len(pkgSummary.RunIDs)
+		total += pkgSummary.NumRuns()
 	}
 	return total
 }
@@ -120,7 +127,15 @@ func (s *RunSummary) NumRuns() int {
 func (s *RunSummary) NumErrorRuns() int {
 	var total int
 	for _, pkgSummary := range s.PackageSummary {
-		total += len(pkgSummary.ErrorRunIDs)
+		total += pkgSummary.NumErrorRuns()
+	}
+	return total
+}
+
+func (s *RunSummary) NumRunningRuns() int {
+	var total int
+	for _, pkgSummary := range s.PackageSummary {
+		total += pkgSummary.NumRunningRuns()
 	}
 	return total
 }
@@ -175,13 +190,34 @@ func (s *RunSummary) NumTotalTests() int {
 	return passed + failed + skipped
 }
 
+// PackageSummary is the per-package part of a RunSummary.
+//
+// RunIDs holds every run of the package that did not error and was executing
+// at some point during the bucket; RunningRunIDs is the subset of those that
+// has not finished yet. ErrorRunIDs holds the runs that errored; they are
+// disjoint from RunIDs and their tests are not counted. The test maps are
+// keyed by test name and only contain tests of runs that started in this
+// bucket.
 type PackageSummary struct {
-	Package      string
-	RunIDs       []uuid.UUID
-	ErrorRunIDs  []uuid.UUID
-	PassedTests  map[string][]uuid.UUID
-	FailedTests  map[string][]uuid.UUID
-	SkippedTests map[string][]uuid.UUID
+	Package       string
+	RunIDs        []uuid.UUID
+	RunningRunIDs []uuid.UUID
+	ErrorRunIDs   []uuid.UUID
+	PassedTests   map[string][]uuid.UUID
+	FailedTests   map[string][]uuid.UUID
+	SkippedTests  map[string][]uuid.UUID
+}
+
+func (s *PackageSummary) NumRuns() int {
+	return len(s.RunIDs)
+}
+
+func (s *PackageSummary) NumErrorRuns() int {
+	return len(s.ErrorRunIDs)
+}
+
+func (s *PackageSummary) NumRunningRuns() int {
+	return len(s.RunningRunIDs)
 }
 
 func (s *PackageSummary) NumPassedTests() int {

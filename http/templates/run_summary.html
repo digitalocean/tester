@@ -6,7 +6,37 @@
   {{if (or (not $filterPackage) (eq $pkg $filterPackage))}}
   <div class="row mb-2">
     <div class="col">
-      <h2 class="h4"><a href="/packages/{{$pkg}}">{{$pkg}}</a> <small class="text-muted" style="font-size: 60%;">{{len $summary.RunIDs}} Runs {{if $summary.ErrorRunIDs}}({{len $summary.ErrorRunIDs}} erred){{end}}</small></h2>
+      <h2 class="h4"><a href="/packages/{{$pkg}}">{{$pkg}}</a> <small class="text-muted" style="font-size: 60%;">{{len $summary.RunIDs}} Runs {{if $summary.RunningRunIDs}}({{len $summary.RunningRunIDs}} running){{end}} {{if $summary.ErrorRunIDs}}({{len $summary.ErrorRunIDs}} erred){{end}}</small></h2>
+
+      {{if or $summary.RunningRunIDs $summary.ErrorRunIDs}}
+      <h3 class="h6">Runs</h3>
+      <div class="row mb-2" style="font-size: 75%;">
+        {{if $summary.RunningRunIDs}}
+        <div class="col-12 col-md-6 mb-2">
+          <strong>Running</strong>
+          <div class="list-group mt-2">
+            {{range $summary.RunningRunIDs}}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="/runs/{{.}}">
+              {{.}} <span class="badge bg-info rounded-pill">running</span>
+            </a>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+        {{if $summary.ErrorRunIDs}}
+        <div class="col-12 col-md-6 mb-2">
+          <strong>Erred</strong>
+          <div class="list-group mt-2">
+            {{range $summary.ErrorRunIDs}}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="/runs/{{.}}">
+              {{.}} <span class="badge bg-danger rounded-pill">erred</span>
+            </a>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
 
       <h3 class="h6">Tests</h3>
       <div class="row" style="font-size: 75%;">

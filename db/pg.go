@@ -564,6 +564,25 @@ func (p *PG) ListRunsForPackage(ctx context.Context, pkg string, limit int) ([]*
 	return runs, nil
 }
 
+// runSummaryLookback bounds how far before `begin` ListRunSummariesInRange
+// looks for runs that started earlier but were still executing at `begin`.
+// It keeps the query a bounded range scan on runs_started_at_finished_at_idx
+// instead of an open-ended `started_at < end`. It only needs to exceed the
+// longest possible run: the scheduler resets or fails any run that exceeds
+// its run timeout (15m by default), so a day is a very generous margin.
+const runSummaryLookback = 24 * time.Hour
+
+// ListRunSummariesInRange buckets the runs that were executing at any point
+// during [begin, end) into windows of `window` and summarises them per
+// package. See tester.RunSummary for the bucket semantics.
+//
+// The query is a LEFT JOIN from runs to tests so a run without tests (an
+// errored or killed run whose test binary never reported anything) still
+// shows up in ErrorRunIDs. Only the columns the summary needs are selected
+// and the test name and state are extracted from the result jsonb in SQL,
+// rather than transferring and unmarshalling the whole document; for the
+// dashboard's 30-day call that is the difference between ~40 MB and a few
+// MB over the wire.
 func (p *PG) ListRunSummariesInRange(ctx context.Context, begin, end time.Time, window time.Duration) ([]*tester.RunSummary, error) {
 	begin = begin.UTC()
 	end = end.UTC()
@@ -577,15 +596,51 @@ func (p *PG) ListRunSummariesInRange(ctx context.Context, begin, end time.Time, 
 			PackageSummary: make(map[string]*tester.PackageSummary),
 		}
 	}
+	if buckets == 0 {
+		return summaries, nil
+	}
+
+	// timestamptz has microsecond precision (and pgx truncates parameters to
+	// match), so do the bucket arithmetic against a `begin` truncated the same
+	// way: otherwise a run stored as started exactly at `begin` computes a
+	// negative offset from a `begin` that still carries nanoseconds.
+	begin = begin.Truncate(time.Microsecond)
+	end = end.Truncate(time.Microsecond)
+	now := p.now().UTC().Truncate(time.Microsecond)
+
+	packageSummary := func(bucket int, pkg string) *tester.PackageSummary {
+		summary := summaries[bucket]
+		ps, ok := summary.PackageSummary[pkg]
+		if !ok {
+			ps = &tester.PackageSummary{
+				Package:      pkg,
+				PassedTests:  make(map[string][]uuid.UUID),
+				FailedTests:  make(map[string][]uuid.UUID),
+				SkippedTests: make(map[string][]uuid.UUID),
+			}
+			summary.PackageSummary[pkg] = ps
+		}
+		return ps
+	}
 
 	err := p.tx(ctx, func(tx pgx.Tx) error {
-		q := psq.Select("runs.package", "runs.id", "runs.started_at", "runs.error", "tests.id", "tests.result").
-			From("tests").
-			Join("runs ON tests.run_id = runs.id").
+		q := psq.Select(
+			"runs.package",
+			"runs.id",
+			"runs.started_at",
+			"runs.finished_at",
+			"(runs.error IS NOT NULL) AS errored",
+			"tests.id",
+			"tests.result->>'name'",
+			"tests.result->>'state'",
+		).
+			From("runs").
+			// The tests of an errored run are not counted, so do not fetch them.
+			LeftJoin("tests ON tests.run_id = runs.id AND runs.error IS NULL").
 			Where("runs.started_at IS NOT NULL").
-			Where("runs.started_at >= ?", begin).
-			Where("runs.started_at <= ?", end).
-			Where("runs.finished_at IS NOT NULL").
+			Where("runs.started_at >= ?", begin.Add(-runSummaryLookback)).
+			Where("runs.started_at < ?", end).
+			Where("(runs.finished_at IS NULL OR runs.finished_at >= ?)", begin).
 			OrderBy("runs.started_at ASC")
 
 		query, args, err := q.ToSql()
@@ -599,49 +654,78 @@ func (p *PG) ListRunSummariesInRange(ctx context.Context, begin, end time.Time, 
 		}
 		defer rows.Close()
 
+		// Rows are one per (run, test) pair, or a single row with NULL test
+		// columns for a run without tests. Run ids are recorded once per run
+		// on its first row; tests are recorded on every row that has one.
+		seenRuns := make(map[uuid.UUID]struct{})
+
 		for rows.Next() {
 			var (
-				packageName  string
-				runID        uuid.UUID
-				runStartedAt time.Time
-				runError     sql.NullString
-				testID       uuid.UUID
-				result       tester.T
+				pkg         string
+				runID       uuid.UUID
+				startedAt   time.Time
+				finishedAt  sql.NullTime
+				errored     bool
+				testID      uuid.NullUUID
+				testName    sql.NullString
+				testState   sql.NullString
+				startBucket int
 			)
-			err := rows.Scan(&packageName, &runID, &runStartedAt, &runError, &testID, &result)
+			err := rows.Scan(&pkg, &runID, &startedAt, &finishedAt, &errored, &testID, &testName, &testState)
 			if err != nil {
 				return err
 			}
-			runStartedAt = runStartedAt.UTC()
 
-			bucketIndex := int(runStartedAt.Sub(begin) / window)
-			summary := summaries[bucketIndex]
+			// The bucket the run started in may be before `begin` (the run
+			// was already executing when the range starts), in which case it
+			// is negative and its tests were counted by a previous range.
+			startBucket = bucketIndex(startedAt.UTC().Sub(begin), window)
 
-			packageSummary, ok := summary.PackageSummary[packageName]
-			if !ok {
-				packageSummary = &tester.PackageSummary{
-					Package:      packageName,
-					PassedTests:  make(map[string][]uuid.UUID),
-					FailedTests:  make(map[string][]uuid.UUID),
-					SkippedTests: make(map[string][]uuid.UUID),
+			if _, seen := seenRuns[runID]; !seen {
+				seenRuns[runID] = struct{}{}
+
+				// A run is attributed to every bucket it overlapped with, as
+				// the half-open interval [started_at, finished_at). A run that
+				// is still running extends to now.
+				until := now
+				if finishedAt.Valid {
+					until = finishedAt.Time.UTC()
 				}
-				summary.PackageSummary[packageName] = packageSummary
+				lastBucket := startBucket
+				if until.After(startedAt) {
+					lastBucket = bucketIndex(until.Sub(begin)-time.Nanosecond, window)
+				}
+				if lastBucket < startBucket {
+					lastBucket = startBucket
+				}
+
+				for b := max(startBucket, 0); b <= min(lastBucket, buckets-1); b++ {
+					ps := packageSummary(b, pkg)
+					switch {
+					case errored:
+						ps.ErrorRunIDs = append(ps.ErrorRunIDs, runID)
+					case !finishedAt.Valid:
+						ps.RunIDs = append(ps.RunIDs, runID)
+						ps.RunningRunIDs = append(ps.RunningRunIDs, runID)
+					default:
+						ps.RunIDs = append(ps.RunIDs, runID)
+					}
+				}
 			}
 
-			// NOTE(nan) we blindly add here and uniquify later.
-			if runError.Valid {
-				packageSummary.ErrorRunIDs = append(packageSummary.ErrorRunIDs, runID)
+			// Tests are only counted in the bucket their run started in, so
+			// a run spanning several buckets is not counted several times.
+			if !testID.Valid || startBucket < 0 || startBucket >= buckets {
 				continue
 			}
-			packageSummary.RunIDs = append(packageSummary.RunIDs, runID)
-
-			switch result.State {
+			ps := packageSummary(startBucket, pkg)
+			switch tester.TBState(testState.String) {
 			case tester.TBStatePassed:
-				packageSummary.PassedTests[result.Name] = append(packageSummary.PassedTests[result.Name], testID)
+				ps.PassedTests[testName.String] = append(ps.PassedTests[testName.String], testID.UUID)
 			case tester.TBStateFailed:
-				packageSummary.FailedTests[result.Name] = append(packageSummary.FailedTests[result.Name], testID)
+				ps.FailedTests[testName.String] = append(ps.FailedTests[testName.String], testID.UUID)
 			case tester.TBStateSkipped:
-				packageSummary.SkippedTests[result.Name] = append(packageSummary.SkippedTests[result.Name], testID)
+				ps.SkippedTests[testName.String] = append(ps.SkippedTests[testName.String], testID.UUID)
 			}
 		}
 		return rows.Err()
@@ -650,34 +734,16 @@ func (p *PG) ListRunSummariesInRange(ctx context.Context, begin, end time.Time, 
 		return nil, err
 	}
 
-	for _, summary := range summaries {
-		for _, packageSummary := range summary.PackageSummary {
-			if len(packageSummary.RunIDs) == 0 {
-				continue
-			}
-
-			var runIDs []uuid.UUID
-			uniqueRunIDs := make(map[uuid.UUID]struct{})
-			for _, id := range packageSummary.RunIDs {
-				if _, exists := uniqueRunIDs[id]; exists {
-					continue
-				}
-				uniqueRunIDs[id] = struct{}{}
-				runIDs = append(runIDs, id)
-			}
-			packageSummary.RunIDs = runIDs
-
-			var errorRunIDs []uuid.UUID
-			uniqueErrorRunIDs := make(map[uuid.UUID]struct{})
-			for _, id := range packageSummary.ErrorRunIDs {
-				if _, exists := uniqueErrorRunIDs[id]; exists {
-					continue
-				}
-				uniqueErrorRunIDs[id] = struct{}{}
-				errorRunIDs = append(errorRunIDs, id)
-			}
-			packageSummary.ErrorRunIDs = errorRunIDs
-		}
-	}
 	return summaries, nil
+}
+
+// bucketIndex returns the index of the window that the offset from the start
+// of a range falls in, rounding towards negative infinity so offsets before
+// the start map to negative indexes rather than to bucket 0.
+func bucketIndex(offset, window time.Duration) int {
+	i := int(offset / window)
+	if offset%window < 0 {
+		i--
+	}
+	return i
 }
