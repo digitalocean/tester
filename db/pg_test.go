@@ -887,9 +887,9 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 						Package:      "pkg-1",
 						RunIDs:       []uuid.UUID{pkg1run1.ID, pkg1run2.ID},
 						ErrorRunIDs:  nil,
-						PassedTests:  map[string][]uuid.UUID{"test-pass": {pkg1run1.Tests[0].ID, pkg1run2.Tests[0].ID}},
-						FailedTests:  map[string][]uuid.UUID{"test-fail": {pkg1run1.Tests[1].ID, pkg1run2.Tests[1].ID}},
-						SkippedTests: map[string][]uuid.UUID{"test-skip": {pkg1run1.Tests[2].ID, pkg1run2.Tests[2].ID}},
+						PassedCount:  2, // 2 runs × 1 passed test each
+						FailedCount:  2, // 2 runs × 1 failed test each
+						SkippedCount: 2, // 2 runs × 1 skipped test each
 					},
 				},
 			}, summaries[0])
@@ -900,9 +900,9 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 				Package:      "pkg-2",
 				RunIDs:       []uuid.UUID{pkg2run1.ID},
 				ErrorRunIDs:  []uuid.UUID{pkg2run2.ID},
-				PassedTests:  map[string][]uuid.UUID{"test-pass": {pkg2run1.Tests[0].ID}},
-				FailedTests:  map[string][]uuid.UUID{},
-				SkippedTests: map[string][]uuid.UUID{},
+				PassedCount:  1,
+				FailedCount:  0,
+				SkippedCount: 0,
 			}, summaries[2].PackageSummary["pkg-2"])
 		})
 	})
@@ -929,9 +929,9 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 			assert.Equal(t, &tester.PackageSummary{
 				Package:      "pkg",
 				ErrorRunIDs:  []uuid.UUID{run.ID},
-				PassedTests:  map[string][]uuid.UUID{},
-				FailedTests:  map[string][]uuid.UUID{},
-				SkippedTests: map[string][]uuid.UUID{},
+				PassedCount:  0,
+				FailedCount:  0,
+				SkippedCount: 0,
 			}, summaries[0].PackageSummary["pkg"])
 			assert.Empty(t, summaries[1].PackageSummary)
 		})
@@ -999,9 +999,9 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 				Package:       "pkg",
 				RunIDs:        []uuid.UUID{run.ID},
 				RunningRunIDs: []uuid.UUID{run.ID},
-				PassedTests:   map[string][]uuid.UUID{"test-pass": {test.ID}},
-				FailedTests:   map[string][]uuid.UUID{},
-				SkippedTests:  map[string][]uuid.UUID{},
+				PassedCount:   1,
+				FailedCount:   0,
+				SkippedCount:  0,
 			}, summaries[0].PackageSummary["pkg"], "start bucket has the run and its tests")
 
 			for _, i := range []int{1, 2} {
@@ -1009,9 +1009,9 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 					Package:       "pkg",
 					RunIDs:        []uuid.UUID{run.ID},
 					RunningRunIDs: []uuid.UUID{run.ID},
-					PassedTests:   map[string][]uuid.UUID{},
-					FailedTests:   map[string][]uuid.UUID{},
-					SkippedTests:  map[string][]uuid.UUID{},
+					PassedCount:   0,
+					FailedCount:   0,
+					SkippedCount:  0,
 				}, summaries[i].PackageSummary["pkg"], "bucket %d has the run but not its tests", i)
 			}
 			assert.Empty(t, summaries[3].PackageSummary, "bucket after now is empty")
@@ -1107,9 +1107,9 @@ func TestPG_ListRunSummariesInRange(t *testing.T) {
 			assert.Equal(t, &tester.PackageSummary{
 				Package:      "pkg",
 				RunIDs:       []uuid.UUID{overlapping.ID},
-				PassedTests:  map[string][]uuid.UUID{},
-				FailedTests:  map[string][]uuid.UUID{},
-				SkippedTests: map[string][]uuid.UUID{},
+				PassedCount:  0, // Tests from run that started before range are not counted
+				FailedCount:  0,
+				SkippedCount: 0,
 			}, summaries[0].PackageSummary["pkg"])
 			assert.Empty(t, summaries[1].PackageSummary)
 		})

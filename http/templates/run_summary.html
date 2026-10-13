@@ -8,11 +8,22 @@
     <div class="col">
       <h2 class="h4"><a href="/packages/{{$pkg}}">{{$pkg}}</a> <small class="text-muted" style="font-size: 60%;">{{len $summary.RunIDs}} Runs {{if $summary.RunningRunIDs}}({{len $summary.RunningRunIDs}} running){{end}} {{if $summary.ErrorRunIDs}}({{len $summary.ErrorRunIDs}} erred){{end}}</small></h2>
 
-      {{if or $summary.RunningRunIDs $summary.ErrorRunIDs}}
       <h3 class="h6">Runs</h3>
       <div class="row mb-2" style="font-size: 75%;">
+        {{if $summary.RunIDs}}
+        <div class="col-12 col-md-4 mb-2">
+          <strong>Completed</strong>
+          <div class="list-group mt-2">
+            {{range $summary.RunIDs}}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="/runs/{{.}}">
+              {{.}} <span class="badge bg-success rounded-pill">completed</span>
+            </a>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
         {{if $summary.RunningRunIDs}}
-        <div class="col-12 col-md-6 mb-2">
+        <div class="col-12 col-md-4 mb-2">
           <strong>Running</strong>
           <div class="list-group mt-2">
             {{range $summary.RunningRunIDs}}
@@ -24,7 +35,7 @@
         </div>
         {{end}}
         {{if $summary.ErrorRunIDs}}
-        <div class="col-12 col-md-6 mb-2">
+        <div class="col-12 col-md-4 mb-2">
           <strong>Erred</strong>
           <div class="list-group mt-2">
             {{range $summary.ErrorRunIDs}}
@@ -36,74 +47,31 @@
         </div>
         {{end}}
       </div>
-      {{end}}
 
-      <h3 class="h6">Tests</h3>
-      <div class="row" style="font-size: 75%;">
-        <div class="col-12 col-md-6 mb-2">
-          <strong>Passed</small></strong>
-          <ul class="list-group mt-2">
-            {{range $name, $testIDs := $summary.PassedTests}}
-            <li class="list-group-item">
-              <div class="d-flex justify-content-between align-items-center">
-                <a data-toggle="collapse" href="#{{$pkg}}-{{$name}}-passed">{{$name}}</a>
-                <span class="badge bg-success rounded-pill">{{len $testIDs}}</span>
-              </div>
-
-              <div id="{{$pkg}}-{{$name}}-passed" class="collapse mt-2">
-                <div class="list-group" style="max-height: 400px; overflow-y: auto;">
-                  {{range $testIDs}}
-                  <div class="list-group-item">
-                    <a href='/tests/{{.}}'>{{.}}</a>
-                  </div>
-                  {{end}}
-                </div>
-              </div>
-            </li>
-            {{end}}
-          </ul>
-        </div>
-
-        <div class="col-12 col-md-6 mb-2">
-          <strong>Failed / Skipped</strong>
-          <ul class="list-group mt-2">
-            {{range $name, $testIDs := $summary.FailedTests}}
-            <li class="list-group-item">
-              <div class="d-flex justify-content-between align-items-center">
-                <a data-toggle="collapse" href="#{{$pkg}}-{{$name}}-failed">{{$name}}</a>
-                <span class="badge bg-danger rounded-pill">{{len $testIDs}}</span>
-              </div>
-
-              <div id="{{$pkg}}-{{$name}}-failed" class="collapse mt-2">
-                <div class="list-group" style="max-height: 400px; overflow-y: auto;">
-                  {{range $testIDs}}
-                  <div class="list-group-item">
-                    <a href='/tests/{{.}}'>{{.}}</a>
-                  </div>
-                  {{end}}
-                </div>
-              </div>
-            </li>
-            {{end}}
-            {{range $name, $testIDs := $summary.SkippedTests}}
-            <li class="list-group-item">
-              <div class="d-flex justify-content-between align-items-center">
-                <a data-toggle="collapse" href="#{{$pkg}}-{{$name}}-skipped">{{$name}}</a>
-                <span class="badge bg-warning rounded-pill">{{len $testIDs}}</span>
-              </div>
-
-              <div id="{{$pkg}}-{{$name}}-skipped" class="collapse mt-2">
-                <div class="list-group" style="max-height: 400px; overflow-y: auto;">
-                  {{range $testIDs}}
-                  <div class="list-group-item">
-                    <a href='/tests/{{.}}'>{{.}}</a>
-                  </div>
-                  {{end}}
-                </div>
-              </div>
-            </li>
-            {{end}}
-          </ul>
+      <h3 class="h6">Test Summary</h3>
+      <div class="row" style="font-size: 85%;">
+        <div class="col-12">
+          <div class="d-flex gap-4">
+            <div class="d-flex align-items-center">
+              <span class="badge bg-success me-2">{{$summary.NumPassedTests}}</span>
+              <span>Passed</span>
+            </div>
+            <div class="d-flex align-items-center">
+              <span class="badge bg-danger me-2">{{$summary.NumFailedTests}}</span>
+              <span>Failed</span>
+            </div>
+            <div class="d-flex align-items-center">
+              <span class="badge bg-warning me-2">{{$summary.NumSkippedTests}}</span>
+              <span>Skipped</span>
+            </div>
+            <div class="d-flex align-items-center">
+              <span class="badge bg-secondary me-2">{{$summary.NumTotalTests}}</span>
+              <span>Total</span>
+            </div>
+          </div>
+          <p class="text-muted mt-2 mb-0">
+            <small>Click on a run above to view individual test results.</small>
+          </p>
         </div>
       </div>
     </div>
