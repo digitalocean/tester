@@ -195,17 +195,18 @@ func (s *RunSummary) NumTotalTests() int {
 // RunIDs holds every run of the package that did not error and was executing
 // at some point during the bucket; RunningRunIDs is the subset of those that
 // has not finished yet. ErrorRunIDs holds the runs that errored; they are
-// disjoint from RunIDs and their tests are not counted. The test maps are
-// keyed by test name and only contain tests of runs that started in this
-// bucket.
+// disjoint from RunIDs and their tests are not counted.
+//
+// Test counts are aggregated in SQL using GROUP BY with FILTER clauses,
+// pushing computation to Postgres rather than iterating row-by-row in Go.
 type PackageSummary struct {
 	Package       string
 	RunIDs        []uuid.UUID
 	RunningRunIDs []uuid.UUID
 	ErrorRunIDs   []uuid.UUID
-	PassedTests   map[string][]uuid.UUID
-	FailedTests   map[string][]uuid.UUID
-	SkippedTests  map[string][]uuid.UUID
+	PassedCount   int
+	FailedCount   int
+	SkippedCount  int
 }
 
 func (s *PackageSummary) NumRuns() int {
@@ -221,11 +222,7 @@ func (s *PackageSummary) NumRunningRuns() int {
 }
 
 func (s *PackageSummary) NumPassedTests() int {
-	var total int
-	for _, tests := range s.PassedTests {
-		total += len(tests)
-	}
-	return total
+	return s.PassedCount
 }
 
 func (s *PackageSummary) PercentPassedTests() float64 {
@@ -233,11 +230,7 @@ func (s *PackageSummary) PercentPassedTests() float64 {
 }
 
 func (s *PackageSummary) NumFailedTests() int {
-	var total int
-	for _, tests := range s.FailedTests {
-		total += len(tests)
-	}
-	return total
+	return s.FailedCount
 }
 
 func (s *PackageSummary) PercentFailedTests() float64 {
@@ -245,11 +238,7 @@ func (s *PackageSummary) PercentFailedTests() float64 {
 }
 
 func (s *PackageSummary) NumSkippedTests() int {
-	var total int
-	for _, tests := range s.SkippedTests {
-		total += len(tests)
-	}
-	return total
+	return s.SkippedCount
 }
 
 func (s *PackageSummary) PercentSkippedTests() float64 {
@@ -257,5 +246,5 @@ func (s *PackageSummary) PercentSkippedTests() float64 {
 }
 
 func (s *PackageSummary) NumTotalTests() int {
-	return s.NumPassedTests() + s.NumFailedTests() + s.NumSkippedTests()
+	return s.PassedCount + s.FailedCount + s.SkippedCount
 }

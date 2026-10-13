@@ -21,17 +21,14 @@ import (
 func uiTestSummaries(begin time.Time, window time.Duration) []*tester.RunSummary {
 	newPkg := func() *tester.PackageSummary {
 		return &tester.PackageSummary{
-			Package:      "pkg",
-			PassedTests:  map[string][]uuid.UUID{},
-			FailedTests:  map[string][]uuid.UUID{},
-			SkippedTests: map[string][]uuid.UUID{},
+			Package: "pkg",
 		}
 	}
 
 	results := newPkg()
 	results.RunIDs = []uuid.UUID{uuid.New()}
-	results.PassedTests["TestA"] = []uuid.UUID{uuid.New()}
-	results.FailedTests["TestB"] = []uuid.UUID{uuid.New()}
+	results.PassedCount = 1
+	results.FailedCount = 1
 
 	running := newPkg()
 	running.RunIDs = []uuid.UUID{uuid.New()}
