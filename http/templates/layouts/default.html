@@ -22,6 +22,22 @@
       .subtest {
           font-size: 80%;
       }
+
+      /* Run summary strip cells without test results. "running" is a bucket
+         with a run still in progress; "active" is a bucket a finished run was
+         executing through (its results are shown in the bucket it started in). */
+      .summary-running {
+          background: repeating-linear-gradient(-45deg, #adb5bd 0 4px, #dee2e6 4px 8px);
+          background-size: 11.3px 11.3px;
+          animation: summary-running-stripes 1s linear infinite;
+      }
+      .summary-active {
+          background: repeating-linear-gradient(-45deg, #ced4da 0 4px, #e9ecef 4px 8px);
+      }
+      @keyframes summary-running-stripes {
+          from { background-position: 0 0; }
+          to { background-position: 11.3px 0; }
+      }
     </style>
 
     <script src="https://kit.fontawesome.com/d6f03257be.js" crossorigin="anonymous"></script>

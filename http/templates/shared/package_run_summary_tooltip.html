@@ -4,7 +4,7 @@
     <div class='col'><strong>Runs</strong></div>
   </div>
   <div class='row'>
-    <div class='col'>Total: {{ len .RunIDs }} {{ if len .ErrorRunIDs }}<small>({{ len .ErrorRunIDs }} erred)</small>{{ end }}</div>
+    <div class='col'>Total: {{ len .RunIDs }} {{ if len .RunningRunIDs }}<small>({{ len .RunningRunIDs }} running)</small>{{ end }} {{ if len .ErrorRunIDs }}<small>({{ len .ErrorRunIDs }} erred)</small>{{ end }}</div>
   </div>
   <hr>
   <div class='row'>

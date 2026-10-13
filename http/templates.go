@@ -92,6 +92,51 @@ func parseTemplate(layout *template.Template, content string) (*template.Templat
 	return t, err
 }
 
+// summaryCounts is implemented by both *tester.RunSummary and
+// *tester.PackageSummary.
+type summaryCounts interface {
+	NumTotalTests() int
+	NumRuns() int
+	NumRunningRuns() int
+	NumErrorRuns() int
+}
+
+// summaryState classifies a summary bucket for the strips:
+//
+//   - "results": the bucket has test results; the pass/skip/fail bar is drawn.
+//   - "errored": no results, but at least one errored run was executing.
+//   - "running": no results, but at least one run is still in progress.
+//   - "active":  no results, but a finished run was executing through this
+//     bucket (it started in an earlier bucket, where its tests are counted).
+//   - "empty":   nothing happened in the bucket.
+func summaryState(s summaryCounts) string {
+	switch v := s.(type) {
+	case *tester.RunSummary:
+		if v == nil {
+			return "empty"
+		}
+	case *tester.PackageSummary:
+		if v == nil {
+			return "empty"
+		}
+	case nil:
+		return "empty"
+	}
+
+	switch {
+	case s.NumTotalTests() > 0:
+		return "results"
+	case s.NumErrorRuns() > 0:
+		return "errored"
+	case s.NumRunningRuns() > 0:
+		return "running"
+	case s.NumRuns() > 0:
+		return "active"
+	default:
+		return "empty"
+	}
+}
+
 type subTest struct {
 	ParentTest *tester.T
 	Test       *tester.T
@@ -164,6 +209,7 @@ func (s *UIHandler) templateFuncs() template.FuncMap {
 				return "unknown"
 			}
 		},
+		"summaryState": summaryState,
 		"runState": func(run *tester.Run) string {
 			if run.StartedAt.IsZero() {
 				return "pending"
